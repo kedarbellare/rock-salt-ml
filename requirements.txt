@@ -1,0 +1,4 @@
+Keras==1.1.1
+Theano==0.8.2
+boto==2.43.0
+ujson==1.35
