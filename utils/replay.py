@@ -145,39 +145,3 @@ def from_local(fname):
 def matrix_window(X, x, y, window):
     return X.take(range(x - window, x + window + 1), axis=1, mode='wrap')\
         .take(range(y - window, y + window + 1), axis=0, mode='wrap')
-
-
-if __name__ == '__main__':
-    import sys
-    replay = from_local(sys.argv[1])
-    print(replay.num_frames)
-    print('-' * 80)
-    first_frame = replay.get_frame(15)
-    player = 3
-    player_y, player_x = first_frame.player_yx(player)
-    player_moves = first_frame.player_moves(player)
-    player_strengths = first_frame.player_strengths(player)
-    player_productions = first_frame.player_productions(player)
-    unowned_strengths = first_frame.unowned_strengths
-    unowned_productions = first_frame.unowned_productions
-    competitor_strengths = first_frame.competitor_strengths(player)
-    competitor_productions = first_frame.competitor_productions(player)
-    print(
-        first_frame.total_player_territory(player),
-        first_frame.total_player_strength(player),
-        first_frame.total_player_production(player),
-    )
-    window = 1
-    for x, y, move in zip(player_x, player_y, player_moves):
-        print(
-            x, y, move,
-            "\nplayer strengths and productions",
-            matrix_window(player_strengths, x, y, window),
-            matrix_window(player_productions, x, y, window),
-            "\nunowned strengths and productions",
-            matrix_window(unowned_strengths, x, y, window),
-            matrix_window(unowned_productions, x, y, window),
-            "\ncompetitor strengths and productions",
-            matrix_window(competitor_strengths, x, y, window),
-            matrix_window(competitor_productions, x, y, window)
-        )
