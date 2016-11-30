@@ -17,10 +17,11 @@ from learn.data import get_XY, ReplayFeaturizer
 from utils.hlt import Move, Square, DIRECTIONS
 from utils.replay import from_local, from_s3
 
-nb_classes = 5
+nb_classes = len(DIRECTIONS)
 window = 7
-default_input_shape = ((2 * window + 1) * 10,)
-cnn_input_shape = (10, (2 * window + 1))
+num_channels = 12
+default_input_shape = ((2 * window + 1) * num_channels,)
+cnn_input_shape = (num_channels, (2 * window + 1))
 
 
 def get_linear_model(input_shape):
@@ -31,12 +32,12 @@ def get_linear_model(input_shape):
 
 def get_mlp_model(input_shape):
     return Sequential([
-        Dense(128, activation='relu', input_shape=input_shape),
+        Dense(512, activation='relu', input_shape=input_shape),
         Dropout(0.25),
-        Dense(64, activation='relu'),
-        Dropout(0.25),
-        Dense(32, activation='relu'),
-        Dropout(0.25),
+        Dense(256, activation='relu'),
+        Dropout(0.1),
+        Dense(128, activation='relu'),
+        Dropout(0.1),
         Dense(nb_classes),
     ])
 

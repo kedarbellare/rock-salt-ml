@@ -7,10 +7,21 @@ from keras.utils import np_utils
 sys.stdout = stdout
 sys.stderr = stderr
 import numpy as np
+from scipy.ndimage.filters import convolve
 
 from utils.hlt import DIRECTIONS
 
 nb_classes = len(DIRECTIONS)
+neighbor_mask = np.array([
+    [0, 1, 0],
+    [1, 0, 1],
+    [0, 1, 0],
+])
+competitor_mask = np.array([
+    [0, 1, 0],
+    [1, -4, 1],
+    [0, 1, 0],
+])
 
 
 def get_XY(replay, player, window, linear=False):
@@ -85,31 +96,32 @@ class ReplayFeaturizer(object):
         player_strengths = frame.player_strengths(self.player) / 255
         competitor_strengths = frame.competitor_strengths(self.player) / 255
         unowned_strengths = frame.unowned_strengths / 255
+        competitor_damages = convolve(
+            competitor_strengths,
+            neighbor_mask,
+            mode='wrap'
+        )
+        player_borders = convolve(
+            np.asarray(competitor_positions, dtype=int),
+            competitor_mask,
+            mode='wrap'
+        ) > 0
         productions = frame.productions / 51
         examples = []
         for x, y in zip(player_x, player_y):
-            """
-            examples.append([
-                surrounding_window(player_positions, x, y, self.window),
-                surrounding_window(unowned_positions, x, y, self.window),
-                surrounding_window(competitor_positions, x, y, self.window),
-                surrounding_window(player_strengths, x, y, self.window),
-                surrounding_window(unowned_strengths, x, y, self.window),
-                surrounding_window(competitor_strengths, x, y, self.window),
-                surrounding_window(productions, x, y, self.window),
-            ])
-            """
             examples.append([
                 north_south_window(player_strengths, x, y, self.window),
                 east_west_window(player_strengths, x, y, self.window),
                 north_south_window(productions, x, y, self.window),
                 east_west_window(productions, x, y, self.window),
-                north_south_window(competitor_positions, x, y, self.window),
-                east_west_window(competitor_positions, x, y, self.window),
+                north_south_window(competitor_damages, x, y, self.window),
+                east_west_window(competitor_damages, x, y, self.window),
                 north_south_window(competitor_strengths, x, y, self.window),
                 east_west_window(competitor_strengths, x, y, self.window),
                 north_south_window(unowned_strengths, x, y, self.window),
                 east_west_window(unowned_strengths, x, y, self.window),
+                north_south_window(player_borders, x, y, self.window),
+                east_west_window(player_borders, x, y, self.window),
             ])
         weights = np.ones(len(examples)) / len(examples)
         return player_x, player_y, examples, weights
