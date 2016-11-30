@@ -16,7 +16,7 @@ logger.info('Done.')
 frame = HaliteReplayFrame.from_game_map(game_map)
 best_moves(model, frame, my_id)
 
-send_init("MyPythonBot")
+send_init("rocksalt v1")
 
 while True:
     moves = []
