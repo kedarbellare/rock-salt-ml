@@ -1,30 +1,47 @@
 import boto
 from boto.s3.key import Key
 import gzip
+import logging
 import numpy as np
 import ujson as json
 
-from utils.hlt import Location, Move, Site, GameMap, STILL
+logging.basicConfig(filename='replay.log', filemode='w', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-conn = boto.connect_s3()
+conn = None
 
 
 class HaliteReplayFrame(object):
 
-    def __init__(self, productions, sites, moves):
+    def __init__(self, productions, owners, strengths, moves):
         self.productions = productions
-        self.sites = sites
+        self.owners = owners
+        self.strengths = strengths
         self.moves = moves
+
+    @staticmethod
+    def from_game_map(game_map):
+        return HaliteReplayFrame(
+            productions=np.array(game_map.production),
+            owners=np.array([square.owner for square in game_map])
+            .reshape(game_map.height, game_map.width),
+            strengths=np.array([square.strength for square in game_map])
+            .reshape(game_map.height, game_map.width),
+            moves=np.zeros((game_map.height, game_map.width), dtype=int)
+        )
 
     @property
     def owned_positions(self):
-        return self.sites[:, :, 0] != 0
+        return self.owners != 0
 
     def player_positions(self, player):
-        return self.sites[:, :, 0] == player
+        return self.owners == player
+
+    def nonplayer_positions(self, player):
+        return self.owners != player
 
     def competitor_positions(self, player):
-        return self.owned_positions & (self.sites[:, :, 0] != player)
+        return self.owned_positions & (self.owners != player)
 
     @property
     def unowned_positions(self):
@@ -43,12 +60,12 @@ class HaliteReplayFrame(object):
         return np.sum(self.player_productions(player))
 
     def __get_strengths(self, positions):
-        strengths = np.zeros(positions.shape)
-        strengths[positions] = self.sites[positions][:, 1]
+        strengths = np.zeros_like(positions, dtype=float)
+        strengths[positions] = self.strengths[positions]
         return strengths
 
     def __get_productions(self, positions):
-        productions = np.zeros(positions.shape)
+        productions = np.zeros_like(positions, dtype=float)
         productions[positions] = self.productions[positions]
         return productions
 
@@ -59,9 +76,10 @@ class HaliteReplayFrame(object):
         return self.__get_productions(self.player_positions(player))
 
     def player_moves(self, player):
-        if self.moves is None:
-            return None
         return self.moves[self.player_positions(player)]
+
+    def nonplayer_strengths(self, player):
+        return self.__get_strengths(self.nonplayer_positions(player))
 
     @property
     def unowned_strengths(self):
@@ -89,95 +107,39 @@ class HaliteReplay(object):
     def __getattr__(self, name):
         return self.data[name]
 
-    def get_game_map(self, frame):
-        assert 0 <= frame < self.num_frames
-        game_map = GameMap(self.width, self.height, self.num_players)
-
-        # overwrite the contents
-        game_map.contents = []
-        for y in range(self.height):
-            row = []
-            for x in range(self.width):
-                owner, strength = self.frames[frame][y][x]
-                row.append(Site(
-                    owner=owner,
-                    strength=strength,
-                    production=self.productions[y][x]
-                ))
-            game_map.contents.append(row)
-        return game_map
-
-    def get_moves(self, frame):
-        assert 0 <= frame < self.num_frames
-
-        moves = []
-        for y in range(self.height):
-            row = []
-            for x in range(self.width):
-                row.append(Move(
-                    Location(x, y),
-                    direction=self.moves[frame - 1][y][x] if frame else STILL
-                ))
-            moves.append(row)
-        return moves
+    @property
+    def winner(self):
+        last_frame = self.get_frame(self.num_frames - 1)
+        _, winner = max(
+            (last_frame.total_player_territory(player), player)
+            for player in range(1, self.num_players + 1)
+        )
+        return winner
 
     def get_frame(self, frame):
         return HaliteReplayFrame(
             self.__productions_arr,
-            self.__frames_arr[frame],
-            self.__moves_arr[frame] if frame < self.num_frames - 1 else None
+            self.__frames_arr[frame][:, :, 0],
+            self.__frames_arr[frame][:, :, 1],
+            self.__moves_arr[frame] if frame < self.num_frames - 1
+            else np.zeros((self.height, self.width), dtype=int)
         )
 
 
 def from_s3(fname):
+    global conn
+    if conn is None:
+        conn = boto.connect_s3()
     bucket = conn.get_bucket('halitereplaybucket')
     k = Key(bucket)
     k.key = fname
-    return HaliteReplay(
-        json.loads(gzip.decompress(k.get_contents_as_string()))
-    )
+    contents = k.get_contents_as_string()
+    try:
+        contents = gzip.decompress(contents)
+    except OSError:
+        pass
+    return HaliteReplay(json.loads(contents))
 
 
 def from_local(fname):
     return HaliteReplay(json.load(open(fname)))
-
-
-def matrix_window(X, x, y, window):
-    return X.take(range(x - window, x + window + 1), axis=1, mode='wrap')\
-        .take(range(y - window, y + window + 1), axis=0, mode='wrap')
-
-
-if __name__ == '__main__':
-    import sys
-    replay = from_local(sys.argv[1])
-    print(replay.num_frames)
-    print('-' * 80)
-    first_frame = replay.get_frame(15)
-    player = 3
-    player_y, player_x = first_frame.player_yx(player)
-    player_moves = first_frame.player_moves(player)
-    player_strengths = first_frame.player_strengths(player)
-    player_productions = first_frame.player_productions(player)
-    unowned_strengths = first_frame.unowned_strengths
-    unowned_productions = first_frame.unowned_productions
-    competitor_strengths = first_frame.competitor_strengths(player)
-    competitor_productions = first_frame.competitor_productions(player)
-    print(
-        first_frame.total_player_territory(player),
-        first_frame.total_player_strength(player),
-        first_frame.total_player_production(player),
-    )
-    window = 1
-    for x, y, move in zip(player_x, player_y, player_moves):
-        print(
-            x, y, move,
-            "\nplayer strengths and productions",
-            matrix_window(player_strengths, x, y, window),
-            matrix_window(player_productions, x, y, window),
-            "\nunowned strengths and productions",
-            matrix_window(unowned_strengths, x, y, window),
-            matrix_window(unowned_productions, x, y, window),
-            "\ncompetitor strengths and productions",
-            matrix_window(competitor_strengths, x, y, window),
-            matrix_window(competitor_productions, x, y, window)
-        )
