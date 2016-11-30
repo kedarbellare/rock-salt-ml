@@ -121,8 +121,7 @@ def learn_from_single_replay(replay):
         model.fit(X_train, Y_train, nb_epoch=30, verbose=1,
                   sample_weight=w_train,
                   validation_data=(X_test, Y_test, w_test))
-        score = model.evaluate(X_test, Y_test, sample_weight=w_test,
-                               verbose=0)
+        score = model.evaluate(X_test, Y_test, verbose=0)
         print('Test score:', score[0])
         print('Test accuracy:', score[1])
         save_model(model)
@@ -156,29 +155,30 @@ def iter_data(fname, batch_size=100):
                 for start in range(0, X_train.shape[0], batch_size):
                     begin, end = start, start + batch_size
                     yield X_train[begin:end], Y_train[begin:end], \
-                        w_train[begin:end], X_test, Y_test, w_test
+                        w_train[begin:end], True
+                yield X_test, Y_test, w_test, False
 
 
 def learn_from_replays(fname):
     model = __default_model()
-    samples = 10000
+    samples = 32
     num_samples_seen = 0
     checkpoint_samples = 1000000
     checkpoint_index = 0
     for epoch in range(10):
         print('>>> Epoch:', (epoch + 1))
-        for X_train, Y_train, w_train, X_test, Y_test, w_test in \
-                iter_data(fname, batch_size=samples):
-            model.train_on_batch(X_train, Y_train, sample_weight=w_train)
-            score = model.evaluate(X_test, Y_test, sample_weight=w_test,
-                                   verbose=0)
-            print('Test:', score)
-            num_samples_seen += X_train.shape[0]
-            curr_checkpoint = int(num_samples_seen / checkpoint_samples)
-            if curr_checkpoint > checkpoint_index:
-                checkpoint_index = curr_checkpoint
-                print('Processed:', num_samples_seen, 'samples')
-                save_model(model)
+        for X, Y, w, is_training in iter_data(fname, batch_size=samples):
+            if is_training:
+                model.train_on_batch(X, Y, sample_weight=w)
+                num_samples_seen += X.shape[0]
+                curr_checkpoint = int(num_samples_seen / checkpoint_samples)
+                if curr_checkpoint > checkpoint_index:
+                    checkpoint_index = curr_checkpoint
+                    print('Processed:', num_samples_seen, 'samples')
+                    save_model(model)
+            else:
+                score = model.evaluate(X, Y, verbose=0)
+                print('Test:', score)
 
 
 if __name__ == '__main__':
