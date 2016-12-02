@@ -138,6 +138,10 @@ def iter_data(fname, batch_size=100):
                 # replay = from_local(replay_name)
             except:
                 continue
+ 
+            if replay.num_frames < 10:
+                print('Skipping:', replay_name, '#frames:', replay.num_frames)
+                continue
 
             print('Replay:', replay_name,
                   '(', (index + 1), '/', len(replay_names), ')',
