@@ -59,6 +59,21 @@ class HaliteReplayFrame(object):
     def total_player_production(self, player):
         return np.sum(self.player_productions(player))
 
+    def total_nonplayer_strength(self, player):
+        return np.sum(self.nonplayer_strengths(player))
+
+    def total_nonplayer_production(self, player):
+        return np.sum(self.nonplayer_productions(player))
+
+    def total_competitor_strength(self, player):
+        return np.sum(self.competitor_strengths(player))
+
+    def total_competitor_production(self, player):
+        return np.sum(self.competitor_productions(player))
+
+    def total_competitor_territory(self, player):
+        return np.sum(self.competitor_positions(player))
+
     def __get_strengths(self, positions):
         strengths = np.zeros_like(positions, dtype=float)
         strengths[positions] = self.strengths[positions]
@@ -80,6 +95,9 @@ class HaliteReplayFrame(object):
 
     def nonplayer_strengths(self, player):
         return self.__get_strengths(self.nonplayer_positions(player))
+
+    def nonplayer_productions(self, player):
+        return self.__get_productions(self.nonplayer_positions(player))
 
     @property
     def unowned_strengths(self):

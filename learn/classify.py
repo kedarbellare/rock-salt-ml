@@ -1,7 +1,9 @@
 import numpy as np
 
+from bisect import bisect_right
 import plac
 import random
+import subprocess
 import ujson as json
 
 from learn.keras_utils import np_utils, models, ModelCheckpoint, Sequential
@@ -74,7 +76,9 @@ def get_cnn1d_model(input_shape):
     ])
 
 
-def create_model(X, **learn_args):
+def create_base_model(X, **learn_args):
+    if learn_args.get('input_model'):
+        return load_model(**learn_args)
     input_shape = X.shape[1:]
     model_type = learn_args['model_type']
     if model_type == 'cnn2d':
@@ -86,6 +90,11 @@ def create_model(X, **learn_args):
     elif model_type == 'linear':
         base_model = get_linear_model(input_shape)
     base_model.summary()
+    return base_model
+
+
+def create_model(X, **learn_args):
+    base_model = create_base_model(X, **learn_args)
     model = Sequential([
         base_model,
         Activation('softmax'),
@@ -99,38 +108,51 @@ def create_model(X, **learn_args):
     return model
 
 
+def store_params(learn_args):
+    print('Learning args: {}'.format(learn_args))
+    with open('%s.json' % learn_args['model_prefix'], 'w') as fout:
+        json.dump(learn_args, fout)
+
+
 def save_model(model, **learn_args):
     print('>>> Saving model...')
-    model.save('%s.hd5' % learn_args['model_prefix'])
+    model.save('%s.h5' % learn_args['model_prefix'])
     print('Done.')
 
 
 def load_model(**learn_args):
-    return models.load_model('%s.hd5' % learn_args['model_prefix'])
+    if learn_args.get('input_model'):
+        return models.load_model(learn_args['input_model'])
+    else:
+        return models.load_model('%s.h5' % learn_args['model_prefix'])
 
 
 def best_moves(model, frame, player, **learn_args):
     player_y, player_x = frame.player_yx(player)
     frame_processor = FEATURE_TYPE_PROCESSOR[learn_args['feature_type']]
     examples, _ = frame_processor(frame, player, window=learn_args['window'])
+    qlearning = learn_args.get('qlearn')
     X = np.array(examples)
     if learn_args['linear']:
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
-    return [
-        Move(
-            Square(x, y, 0, 0, 0),
-            DIRECTIONS[np.argmax(model.predict(np.array([vec]))[0])]
-        )
-        for x, y, vec in zip(player_x, player_y, X)
-    ]
+    eps = learn_args.get('curr_eps', 0.0)
+    moves = []
+    for x, y, vec in zip(player_x, player_y, X):
+        if qlearning and np.random.random() < eps:
+            direction = random.choice(DIRECTIONS)
+        else:
+            pred = np.argmax(model.predict(np.array([vec]))[0])
+            direction = DIRECTIONS[pred]
+        moves.append(Move(Square(x, y, 0, 0, 0), direction))
+    return moves
 
 
-def get_XY(replay, **learn_args):
+def get_XY(replay, player, **learn_args):
     # construct input and output
     examples, labels = process_replay(
         FEATURE_TYPE_PROCESSOR[learn_args['feature_type']],
         replay,
-        player=replay.winner,
+        player=player,
         window=learn_args['window']
     )
     X, y = np.array(examples), np.array(labels, dtype=int)
@@ -140,8 +162,8 @@ def get_XY(replay, **learn_args):
     return X, Y
 
 
-def get_train_test_data(replay, **learn_args):
-    X, Y = get_XY(replay, **learn_args)
+def get_train_test_data(replay, player, **learn_args):
+    X, Y = get_XY(replay, player, **learn_args)
 
     # create splits for train/test
     kf = ShuffleSplit(
@@ -163,13 +185,13 @@ def learn_from_single_replay(input_file, **learn_args):
         from_s3(input_file)
 
     X_train, Y_train, X_test, Y_test = \
-        get_train_test_data(replay, **learn_args)
+        get_train_test_data(replay, replay.winner, **learn_args)
 
     # create model
     model = create_model(X_train, **learn_args)
     model.fit(X_train, Y_train, nb_epoch=20, verbose=1,
               callbacks=[ModelCheckpoint(
-                  filepath='%s.hd5' % learn_args['model_prefix'],
+                  filepath='%s.h5' % learn_args['model_prefix'],
                   monitor='val_acc',
                   save_best_only=True,
                   mode='max',
@@ -200,7 +222,7 @@ def iter_data(input_file, **learn_args):
               '(', (index + 1), '/', len(replay_names), ')',
               'Winner:', replay.player_names[replay.winner - 1])
         X_train, Y_train, X_test, Y_test = \
-            get_train_test_data(replay, **learn_args)
+            get_train_test_data(replay, replay.winner, **learn_args)
 
         for start in range(0, X_train.shape[0], batch_size):
             begin, end = start, start + batch_size
@@ -213,7 +235,7 @@ def learn_from_multiple_replays(input_file, **learn_args):
     num_samples_seen = 0
     checkpoint_samples = learn_args['checkpoint_samples']
     checkpoint_index = 0
-    for epoch in range(10):
+    for epoch in range(learn_args['epochs']):
         print('>>> Epoch:', (epoch + 1))
         for X, Y, is_training in iter_data(input_file, **learn_args):
             if model is None:
@@ -232,57 +254,169 @@ def learn_from_multiple_replays(input_file, **learn_args):
                 print('Test accuracy:', score[1])
 
 
+def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
+    assert sum(territories) == X.shape[0]
+    cumulative_territories = [
+        sum(territories[:i]) for i in range(1, len(territories) + 1)
+    ]
+    discount = learn_args['gamma']
+    indices = list(range(X.shape[0]))
+    random.shuffle(indices)
+    batch_size = learn_args['batch_size']
+    loss = 0.0
+    Q_scores = model.predict(X)
+    for start in range(0, X.shape[0], batch_size):
+        begin, end = start, start + batch_size
+        curr_indices = indices[begin:end]
+        X_batch = X[curr_indices]
+        Y_batch = Y[curr_indices]
+        batch_rewards = np.zeros_like(Y_batch, dtype=float)
+        batch_rewards += Q_scores[curr_indices]
+        for i, idx in enumerate(curr_indices):
+            frame = bisect_right(cumulative_territories, idx)
+            frame_begin = 0 if frame == 0 else \
+                cumulative_territories[frame - 1]
+            frame_end = cumulative_territories[frame]
+            step_reward = rewards[frame]
+            if frame < len(territories) - 1:
+                next_frame_begin = frame_end
+                next_frame_end = cumulative_territories[frame + 1]
+                next_frame_q = Q_scores[next_frame_begin:next_frame_end]
+                step_reward += discount * np.sum(np.max(next_frame_q, axis=1))
+            frame_q = Q_scores[frame_begin:frame_end] * \
+                Y[frame_begin:frame_end]
+            step_reward -= np.sum(frame_q)
+            step_reward /= territories[frame]
+            batch_rewards[i] += Y_batch[i] * step_reward
+        loss += model.train_on_batch(X_batch, batch_rewards)
+    return loss
+
+
+def learn_from_qlearning(**learn_args):
+    start_eps = learn_args['start_eps']
+    end_eps = learn_args['end_eps']
+    nb_epochs = learn_args['epochs']
+    eps_delta = (start_eps - end_eps) / nb_epochs
+    wins = 0
+    observe = 0
+    curr_eps = start_eps
+    model = None
+    player = 1  # the first player is always us
+    for epoch in range(nb_epochs):
+        learn_args['curr_epoch'] = epoch
+        learn_args['curr_eps'] = curr_eps
+        store_params(learn_args)
+
+        # play the game
+        proc = subprocess.run(
+            './halite -d "30 30" -q '
+            '"python3 MyBot.py" "python3 OverkillBot.py"',
+            shell=True,
+            check=True,
+            stdout=subprocess.PIPE
+        )
+        game_outputs = proc.stdout.decode('utf-8').split('\n')
+        print('\n'.join(game_outputs))
+        replay_name, _ = game_outputs[2].split()
+        if game_outputs[3] == '1 1':
+            wins += 1
+
+        # get the replay
+        replay = from_local(replay_name)
+        X, Y = get_XY(replay, player, **learn_args)
+        if model is None:
+            model = create_base_model(X, **learn_args)
+            model.compile(loss='mse', optimizer='adam')
+        print('#frames={}'.format(replay.num_frames))
+
+        rewards = []
+        territories = []
+        for i in range(replay.num_frames - 1):
+            frame = replay.get_frame(i)
+            next_frame = replay.get_frame(i + 1)
+            territories.append(int(frame.total_player_territory(player)))
+            frame_reward = \
+                frame.total_player_territory(player) - \
+                frame.total_competitor_territory(player)
+            next_frame_reward = \
+                next_frame.total_player_territory(player) - \
+                next_frame.total_competitor_territory(player)
+            rewards.append(1. * (next_frame_reward - frame_reward))
+        print(rewards)
+
+        loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
+        save_model(model, **learn_args)
+        print("Epoch {}/{} | Loss {:.4f} | Win count {}".format(
+            epoch + 1, nb_epochs, loss, wins))
+
+        if curr_eps > end_eps and epoch >= observe:
+            curr_eps -= eps_delta
+
+
 @plac.annotations(
     input_file='Input file name',
     model_prefix='Model prefix',
-    model_type=('Model type',
-                'option', 'm', str, ['linear', 'mlp', 'cnn1d', 'cnn2d']),
-    feature_type=('Feature type (axes, tile)',
-                  'option', 'f', str, ['axes', 'tile']),
-    local_replays=('Whether the hlt files are local or S3',
-                   'flag', 'l'),
-    learn_single=('Learn from a single replay or batch of replays',
-                  'flag', 's'),
-    window_size=('Window size for features',
-                 'option', 'w'),
-    test_size=('Proportion of the data to use for validation',
-               'option'),
-    batch_size=('Size of batch to use during training',
-                'option'),
-    checkpoint_samples=('Number of samples to checkpoint',
-                        'option'),
+    input_model=('Input model file name (if any)', 'option', 'i'),
+    model_type=('Model type', 'option', 'm', str,
+                ['linear', 'mlp', 'cnn1d', 'cnn2d']),
+    feature_type=('Feature type (axes, tile)', 'option', 'f', str,
+                  ['axes', 'tile']),
+    local_replays=('Whether the hlt files are local or S3', 'flag', 'l'),
+    learn_single=('Learn from a single or a batch of replays', 'flag', 's'),
+    qlearn=('Learn via q-learning', 'flag', 'q'),
+    window_size=('Window size for features', 'option', 'w'),
+    test_size=('Proportion of the data to use for validation', 'option'),
+    batch_size=('Size of batch to use during training', 'option'),
+    checkpoint_samples=('Number of samples to checkpoint', 'option'),
+    gamma=('Discounting factor for future rewards', 'option'),
+    start_eps=('Starting epsilon', 'option'),
+    end_eps=('Ending epsilon', 'option'),
+    epochs=('Number of training epochs', 'option'),
 )
 def learn(
     input_file,
     model_prefix,
+    input_model=None,
     model_type='mlp',
     feature_type='tile',
     local_replays=False,
     learn_single=False,
+    qlearn=False,
     window_size=5,
     test_size=0.1,
     batch_size=32,
     checkpoint_samples=100000,
+    gamma=0.9,
+    start_eps=0.5,
+    end_eps=0.1,
+    epochs=1000,
 ):
     learn_args = {
         'linear': model_type in ('linear', 'mlp'),
         'model_type': model_type,
+        'input_model': input_model,
         'feature_type': feature_type,
         'model_prefix': model_prefix,
         'local_replays': local_replays,
+        'qlearn': qlearn,
         'window': int(window_size),
         'test_size': float(test_size),
         'batch_size': int(batch_size),
         'checkpoint_samples': int(checkpoint_samples),
+        'gamma': float(gamma),
+        'start_eps': float(start_eps),
+        'end_eps': float(end_eps),
+        'epochs': int(epochs),
     }
-    print('Learning args: {}'.format(learn_args))
-    with open('%s.json' % model_prefix, 'w') as fout:
-        json.dump(learn_args, fout)
+    store_params(learn_args)
 
-    if learn_single:
-        learn_from_single_replay(input_file, **learn_args)
+    if qlearn:
+        learn_from_qlearning(**learn_args)
     else:
-        learn_from_multiple_replays(input_file, **learn_args)
+        if learn_single:
+            learn_from_single_replay(input_file, **learn_args)
+        else:
+            learn_from_multiple_replays(input_file, **learn_args)
 
 
 if __name__ == '__main__':
