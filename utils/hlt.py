@@ -1,6 +1,8 @@
 """
 A Python-based Halite starter-bot framework.
 
+Borrowed from @erdman's alt halite python3 package
+
 This module contains a Pythonic implementation of a Halite starter-bot
 framework. In addition to a class (GameMap) containing all information about
 the game world and some helper methods, the module also imeplements the
