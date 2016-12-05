@@ -9,6 +9,7 @@ import ujson as json
 from learn.keras_utils import np_utils, models, ModelCheckpoint, Sequential
 from learn.keras_utils import Activation, Convolution1D, Convolution2D, \
     Dense, Dropout, Flatten
+from learn.keras_utils import SGD
 from learn.features import \
     process_frame_axes, process_frame_tile, \
     process_replay
@@ -326,7 +327,8 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            model.compile(loss='mse', optimizer='sgd')
+            optimizer = SGD(lr=1e-2, clipnorm=1.0)
+            model.compile(loss='mse', optimizer=optimizer)
         print('#frames={}'.format(replay.num_frames))
 
         rewards = []

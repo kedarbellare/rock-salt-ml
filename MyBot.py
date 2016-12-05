@@ -1,7 +1,7 @@
 import logging
 import ujson as json
 
-from learn.classify import load_model, best_moves
+from learn.train import load_model, best_moves
 from utils.hlt import get_init, send_init, send_frame
 from utils.replay import HaliteReplayFrame
 
