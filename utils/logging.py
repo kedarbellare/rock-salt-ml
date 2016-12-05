@@ -8,6 +8,6 @@ logging.basicConfig(
 )
 
 
-def log(logfn, *args):
-    logfn(*args)
-    print(*args)
+def log(logfn, msg):
+    logfn(msg)
+    print(msg)

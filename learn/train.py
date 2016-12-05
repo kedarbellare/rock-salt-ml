@@ -106,7 +106,7 @@ def create_model(X, **learn_args):
         Activation('softmax'),
     ])
     model.summary()
-    optimizer = Adam(lr=1e-5, clipnorm=1.0)
+    optimizer = Adam(lr=1e-5)
     model.compile(
         loss='categorical_crossentropy',
         optimizer=optimizer,
@@ -182,8 +182,8 @@ def get_train_test_data(replay, player, **learn_args):
     X_train, X_test = X[train_index], X[test_index]
     Y_train, Y_test = Y[train_index], Y[test_index]
 
-    log(logger.info, '#train:', X_train.shape)
-    log(logger.info, '#test:', X_test.shape)
+    log(logger.info, '#train: {}'.format(X_train.shape))
+    log(logger.info, '#test: {}'.format(X_test.shape))
     return X_train, Y_train, X_test, Y_test
 
 
@@ -206,8 +206,7 @@ def learn_from_single_replay(input_file, **learn_args):
               )],
               validation_data=(X_test, Y_test))
     score = model.evaluate(X_test, Y_test, verbose=0)
-    log(logger.info, 'Test score:', score[0])
-    log(logger.info, 'Test accuracy:', score[1])
+    log(logger.info, 'Test score: {} accuracy: {}'.format(score[0], score[1]))
 
 
 def iter_data(input_file, **learn_args):
@@ -222,14 +221,14 @@ def iter_data(input_file, **learn_args):
             continue
 
         if replay.num_frames < 10:
-            log(logger.info, 'Skipping:', replay_name,
-                '#frames:', replay.num_frames)
+            log(logger.info, 'Skipping: {}, #frames={}'.format(
+                replay_name, replay.num_frames))
             continue
 
         log(logger.info,
-            'Replay:', replay_name,
-            '(', (index + 1), '/', len(replay_names), ')',
-            'Winner:', replay.player_names[replay.winner - 1])
+            'Replay: {} ({} / {}) Winner: {}'.format(replay_name,
+                (index + 1), len(replay_names),
+                replay.player_names[replay.winner - 1]))
         X_train, Y_train, X_test, Y_test = \
             get_train_test_data(replay, replay.winner, **learn_args)
 
@@ -245,7 +244,7 @@ def learn_from_multiple_replays(input_file, **learn_args):
     checkpoint_samples = learn_args['checkpoint_samples']
     checkpoint_index = 0
     for epoch in range(learn_args['epochs']):
-        log(logger.info, '>>> Epoch:', (epoch + 1))
+        log(logger.info, '>>> Epoch: {}'.format(epoch + 1))
         for X, Y, is_training in iter_data(input_file, **learn_args):
             if model is None:
                 model = create_model(X, **learn_args)
@@ -255,12 +254,13 @@ def learn_from_multiple_replays(input_file, **learn_args):
                 curr_checkpoint = int(num_samples_seen / checkpoint_samples)
                 if curr_checkpoint > checkpoint_index:
                     checkpoint_index = curr_checkpoint
-                    log(logger.info, 'Processed:', num_samples_seen, 'samples')
+                    log(logger.info, 'Processed: {} samples'.format(
+                        num_samples_seen))
                     save_model(model, **learn_args)
             else:
                 score = model.evaluate(X, Y, verbose=0)
-                log(logger.info, 'Test score:', score[0])
-                log(logger.info, 'Test accuracy:', score[1])
+                log(logger.info, 'Test score: {} accuracy: {}'.format(
+                    score[0], score[1]))
 
 
 def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
@@ -318,7 +318,7 @@ def learn_from_qlearning(**learn_args):
 
         # play the game
         proc = subprocess.run(
-            './halite -d "30 30" -q '
+            './halite -d "30 30" -t -q '
             '"python3 MyBot.py" "python3 OverkillBot.py"',
             shell=True,
             check=True,
@@ -332,12 +332,16 @@ def learn_from_qlearning(**learn_args):
 
         # get the replay
         replay = from_local(replay_name)
+        if replay.num_frames < 10:
+            log(logger.info, 'Skipping: {}, #frames={}'.format(
+                replay_name, replay.num_frames))
+            continue
+
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            optimizer = Adam(lr=1e-8, clipnorm=1.0)
+            optimizer = Adam(lr=1e-8)
             model.compile(loss='mse', optimizer=optimizer)
-        log(logger.info, '#frames={}'.format(replay.num_frames))
 
         rewards = []
         territories = []
@@ -356,6 +360,8 @@ def learn_from_qlearning(**learn_args):
                 (1. * (next_frame_reward - frame_reward)) / map_size)
         # additional reward signal if player won/lost
         rewards[-1] += 1.0 if player == replay.winner else -1.0
+        log(logger.info, '#frames={}, max territory={}'.format(
+            replay.num_frames, max(territories)))
         log(logger.info, rewards)
 
         loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
