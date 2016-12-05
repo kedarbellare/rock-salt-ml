@@ -81,7 +81,10 @@ def get_cnn1d_model(input_shape):
 
 def create_base_model(X, **learn_args):
     if learn_args.get('input_model'):
-        return load_model(**learn_args)
+        base_model = load_model(**learn_args)
+        if len(base_model.layers) == 2:
+            base_model.pop()
+        return base_model
     input_shape = X.shape[1:]
     model_type = learn_args['model_type']
     if model_type == 'cnn2d':
@@ -103,9 +106,10 @@ def create_model(X, **learn_args):
         Activation('softmax'),
     ])
     model.summary()
+    optimizer = Adam(lr=1e-5, clipnorm=1.0)
     model.compile(
         loss='categorical_crossentropy',
-        optimizer='adam',
+        optimizer=optimizer,
         metrics=['accuracy']
     )
     return model
@@ -350,6 +354,8 @@ def learn_from_qlearning(**learn_args):
                 next_frame.total_player_production(player) / 51
             rewards.append(
                 (1. * (next_frame_reward - frame_reward)) / map_size)
+        # additional reward signal if player won/lost
+        rewards[-1] += 1.0 if player == replay.winner else -1.0
         log(logger.info, rewards)
 
         loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
