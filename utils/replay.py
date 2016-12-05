@@ -1,12 +1,8 @@
 import boto
 from boto.s3.key import Key
 import gzip
-import logging
 import numpy as np
 import ujson as json
-
-logging.basicConfig(filename='replay.log', filemode='w', level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 conn = None
 

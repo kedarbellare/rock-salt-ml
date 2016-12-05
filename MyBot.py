@@ -1,8 +1,8 @@
-import logging
 import ujson as json
 
 from learn.train import load_model, best_moves
 from utils.hlt import get_init, send_init, send_frame
+from utils.logging import logging
 from utils.replay import HaliteReplayFrame
 
 logger = logging.getLogger(__name__)

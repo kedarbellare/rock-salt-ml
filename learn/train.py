@@ -15,6 +15,7 @@ from learn.features import \
     process_replay
 from sklearn.model_selection import ShuffleSplit
 from utils.hlt import Move, Square, DIRECTIONS
+from utils.logging import logging, log
 from utils.replay import from_local, from_s3
 
 nb_classes = len(DIRECTIONS)
@@ -22,6 +23,7 @@ FEATURE_TYPE_PROCESSOR = {
     'axes': process_frame_axes,
     'tile': process_frame_tile,
 }
+logger = logging.getLogger(__name__)
 
 
 def get_linear_model(input_shape):
@@ -110,15 +112,15 @@ def create_model(X, **learn_args):
 
 
 def store_params(learn_args):
-    print('Learning args: {}'.format(learn_args))
+    log(logger.info, 'Learning args: {}'.format(learn_args))
     with open('%s.json' % learn_args['model_prefix'], 'w') as fout:
         json.dump(learn_args, fout)
 
 
 def save_model(model, **learn_args):
-    print('>>> Saving model...')
+    log(logger.info, '>>> Saving model...')
     model.save('%s.h5' % learn_args['model_prefix'])
-    print('Done.')
+    log(logger.info, 'Done.')
 
 
 def load_model(**learn_args):
@@ -176,8 +178,8 @@ def get_train_test_data(replay, player, **learn_args):
     X_train, X_test = X[train_index], X[test_index]
     Y_train, Y_test = Y[train_index], Y[test_index]
 
-    print('#train:', X_train.shape)
-    print('#test:', X_test.shape)
+    log(logger.info, '#train:', X_train.shape)
+    log(logger.info, '#test:', X_test.shape)
     return X_train, Y_train, X_test, Y_test
 
 
@@ -200,8 +202,8 @@ def learn_from_single_replay(input_file, **learn_args):
               )],
               validation_data=(X_test, Y_test))
     score = model.evaluate(X_test, Y_test, verbose=0)
-    print('Test score:', score[0])
-    print('Test accuracy:', score[1])
+    log(logger.info, 'Test score:', score[0])
+    log(logger.info, 'Test accuracy:', score[1])
 
 
 def iter_data(input_file, **learn_args):
@@ -216,12 +218,14 @@ def iter_data(input_file, **learn_args):
             continue
 
         if replay.num_frames < 10:
-            print('Skipping:', replay_name, '#frames:', replay.num_frames)
+            log(logger.info, 'Skipping:', replay_name,
+                '#frames:', replay.num_frames)
             continue
 
-        print('Replay:', replay_name,
-              '(', (index + 1), '/', len(replay_names), ')',
-              'Winner:', replay.player_names[replay.winner - 1])
+        log(logger.info,
+            'Replay:', replay_name,
+            '(', (index + 1), '/', len(replay_names), ')',
+            'Winner:', replay.player_names[replay.winner - 1])
         X_train, Y_train, X_test, Y_test = \
             get_train_test_data(replay, replay.winner, **learn_args)
 
@@ -237,7 +241,7 @@ def learn_from_multiple_replays(input_file, **learn_args):
     checkpoint_samples = learn_args['checkpoint_samples']
     checkpoint_index = 0
     for epoch in range(learn_args['epochs']):
-        print('>>> Epoch:', (epoch + 1))
+        log(logger.info, '>>> Epoch:', (epoch + 1))
         for X, Y, is_training in iter_data(input_file, **learn_args):
             if model is None:
                 model = create_model(X, **learn_args)
@@ -247,12 +251,12 @@ def learn_from_multiple_replays(input_file, **learn_args):
                 curr_checkpoint = int(num_samples_seen / checkpoint_samples)
                 if curr_checkpoint > checkpoint_index:
                     checkpoint_index = curr_checkpoint
-                    print('Processed:', num_samples_seen, 'samples')
+                    log(logger.info, 'Processed:', num_samples_seen, 'samples')
                     save_model(model, **learn_args)
             else:
                 score = model.evaluate(X, Y, verbose=0)
-                print('Test score:', score[0])
-                print('Test accuracy:', score[1])
+                log(logger.info, 'Test score:', score[0])
+                log(logger.info, 'Test accuracy:', score[1])
 
 
 def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
@@ -317,7 +321,7 @@ def learn_from_qlearning(**learn_args):
             stdout=subprocess.PIPE
         )
         game_outputs = proc.stdout.decode('utf-8').split('\n')
-        print('\n'.join(game_outputs))
+        log(logger.info, '\n'.join(game_outputs))
         replay_name, _ = game_outputs[2].split()
         if game_outputs[3] == '1 1':
             wins += 1
@@ -329,7 +333,7 @@ def learn_from_qlearning(**learn_args):
             model = create_base_model(X, **learn_args)
             optimizer = SGD(lr=1e-2, clipnorm=1.0)
             model.compile(loss='mse', optimizer=optimizer)
-        print('#frames={}'.format(replay.num_frames))
+        log(logger.info, '#frames={}'.format(replay.num_frames))
 
         rewards = []
         territories = []
@@ -346,11 +350,11 @@ def learn_from_qlearning(**learn_args):
                 next_frame.total_player_production(player) / 51
             rewards.append(
                 (1. * (next_frame_reward - frame_reward)) / map_size)
-        print(rewards)
+        log(logger.info, rewards)
 
         loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
         save_model(model, **learn_args)
-        print("Epoch {}/{} | Loss {:.4f} | Win count {}".format(
+        log(logger.info, "Epoch {}/{} | Loss {:.4f} | Win count {}".format(
             epoch + 1, nb_epochs, loss, wins))
 
         if curr_eps > end_eps and epoch >= observe:
