@@ -264,12 +264,12 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     random.shuffle(indices)
     batch_size = learn_args['batch_size']
     loss = 0.0
-    Q_scores = model.predict(X)
     for start in range(0, X.shape[0], batch_size):
         begin, end = start, start + batch_size
         curr_indices = indices[begin:end]
         X_batch = X[curr_indices]
         Y_batch = Y[curr_indices]
+        Q_scores = model.predict(X)
         batch_rewards = np.zeros_like(Y_batch, dtype=float)
         batch_rewards += Q_scores[curr_indices]
         for i, idx in enumerate(curr_indices):
@@ -326,22 +326,24 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            model.compile(loss='mse', optimizer='adam')
+            model.compile(loss='mse', optimizer='sgd')
         print('#frames={}'.format(replay.num_frames))
 
         rewards = []
         territories = []
+        map_size = 1.  # * replay.width * replay.height
         for i in range(replay.num_frames - 1):
             frame = replay.get_frame(i)
             next_frame = replay.get_frame(i + 1)
             territories.append(int(frame.total_player_territory(player)))
             frame_reward = \
-                frame.total_player_territory(player) - \
-                frame.total_competitor_territory(player)
+                frame.total_player_strength(player) / 255 + \
+                frame.total_player_production(player) / 51
             next_frame_reward = \
-                next_frame.total_player_territory(player) - \
-                next_frame.total_competitor_territory(player)
-            rewards.append(1. * (next_frame_reward - frame_reward))
+                next_frame.total_player_strength(player) / 255 + \
+                next_frame.total_player_production(player) / 51
+            rewards.append(
+                (1. * (next_frame_reward - frame_reward)) / map_size)
         print(rewards)
 
         loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
