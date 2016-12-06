@@ -1,1 +1,1 @@
-{"model_type":"mlp","input_model":null,"batch_size":32,"epochs":1000,"local_replays":true,"checkpoint_samples":100000,"window":5,"start_eps":0.5,"feature_type":"axes","end_eps":0.1,"model_prefix":"model","gamma":0.9,"test_size":0.1,"qlearn":false,"linear":true}
+{"batch_size":32,"window":5,"input_model":null,"end_eps":0.1,"model_prefix":"model","gamma":0.9,"qlearn":false,"model_type":"mlp","test_size":0.1,"start_eps":0.5,"local_replays":true,"epochs":5,"feature_type":"tile","checkpoint_samples":100000,"linear":true}
