@@ -225,10 +225,9 @@ def iter_data(input_file, **learn_args):
                 replay_name, replay.num_frames))
             continue
 
-        log(logger.info,
-            'Replay: {} ({} / {}) Winner: {}'.format(replay_name,
-                (index + 1), len(replay_names),
-                replay.player_names[replay.winner - 1]))
+        log(logger.info, 'Replay: {} ({} / {}) Winner: {}'.format(
+            replay_name, (index + 1), len(replay_names),
+            replay.player_names[replay.winner - 1]))
         X_train, Y_train, X_test, Y_test = \
             get_train_test_data(replay, replay.winner, **learn_args)
 
@@ -352,13 +351,13 @@ def learn_from_qlearning(**learn_args):
             territories.append(int(frame.total_player_territory(player)))
             frame_reward = \
                 frame.total_player_strength(player) / 255 + \
-                frame.total_player_production(player) / 51
+                frame.total_player_production(player) / 20
             next_frame_reward = \
                 next_frame.total_player_strength(player) / 255 + \
-                next_frame.total_player_production(player) / 51
+                next_frame.total_player_production(player) / 20
             rewards.append(
                 (1. * (next_frame_reward - frame_reward)) / map_size)
-        # additional reward signal if player won/lost
+        # additional reward signal if player won/lost (is this needed???)
         rewards[-1] += 1.0 if player == replay.winner else -1.0
         log(logger.info, '#frames={}, max territory={}'.format(
             replay.num_frames, max(territories)))
