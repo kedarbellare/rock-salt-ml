@@ -1,6 +1,11 @@
 """
 Frame/replay processing to create examples and labels
 """
+import numpy as np
+
+from utils.logging import logging
+
+logger = logging.getLogger(__name__)
 
 
 def east_window(X, x, y, window):
@@ -92,19 +97,18 @@ def process_frame_tile(frame, player, window):
     player_y, player_x = frame.player_yx(player)
     player_moves = frame.player_moves(player)
 
-    player_strengths = frame.player_strengths(player) / 255
-    competitor_strengths = frame.competitor_strengths(player) / 255
-    unowned_strengths = frame.unowned_strengths / 255
-    productions = frame.productions / 51
+    stacked = np.array([
+        frame.player_strengths(player) / 255,
+        frame.productions / 51,
+        frame.competitor_strengths(player) / 255,
+        frame.unowned_strengths / 255,
+    ])
 
     examples, labels = [], []
     for x, y, move in zip(player_x, player_y, player_moves):
-        features = [
-            surrounding_window(player_strengths, x, y, window),
-            surrounding_window(productions, x, y, window),
-            surrounding_window(competitor_strengths, x, y, window),
-            surrounding_window(unowned_strengths, x, y, window),
-        ]
+        features = stacked\
+            .take(range(y - window, y + window + 1), axis=1, mode='wrap')\
+            .take(range(x - window, x + window + 1), axis=2, mode='wrap')
         examples.append(features)
         labels.append(move)
     return examples, labels
