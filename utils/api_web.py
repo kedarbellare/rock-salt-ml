@@ -26,5 +26,5 @@ def get_game_replays(userID, limit=500):
 
 
 if __name__ == '__main__':
-    for replayName in get_game_replays(1017, limit=2000):
+    for replayName in get_game_replays(2609, limit=2000):
         print(replayName)
