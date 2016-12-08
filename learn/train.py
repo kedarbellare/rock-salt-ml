@@ -143,13 +143,13 @@ def best_moves(model, frame, player, **learn_args):
     if learn_args['linear']:
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
     eps = learn_args.get('curr_eps', 0.0)
+    best_indices = np.argmax(model.predict(X), axis=1)
     moves = []
-    for x, y, vec in zip(player_x, player_y, X):
+    for x, y, i in zip(player_x, player_y, best_indices):
         if qlearning and np.random.random() < eps:
             direction = random.choice(DIRECTIONS)
         else:
-            pred = np.argmax(model.predict(np.array([vec]))[0])
-            direction = DIRECTIONS[pred]
+            direction = DIRECTIONS[i]
         moves.append(Move(Square(x, y, 0, 0, 0), direction))
     return moves
 
@@ -263,6 +263,8 @@ def learn_from_multiple_replays(input_file, **learn_args):
 
 
 def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
+    import sys
+
     assert sum(territories) == X.shape[0]
     cumulative_territories = [
         sum(territories[:i]) for i in range(1, len(territories) + 1)
@@ -272,7 +274,8 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     random.shuffle(indices)
     batch_size = learn_args['batch_size']
     loss = 0.0
-    for start in range(0, X.shape[0], batch_size):
+    num_learn_samples = min(X.shape[0], batch_size * 250)
+    for epoch, start in enumerate(range(0, num_learn_samples, batch_size)):
         begin, end = start, start + batch_size
         curr_indices = indices[begin:end]
         X_batch = X[curr_indices]
@@ -297,6 +300,9 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
             step_reward /= territories[frame]
             batch_rewards[i] += Y_batch[i] * step_reward
         loss += model.train_on_batch(X_batch, batch_rewards)
+        if (epoch + 1) % 20 == 0:
+            print('Loss: {:.4f} #samples={} ...  '.format(loss, end), end='')
+            sys.stdout.flush()
     return loss
 
 
@@ -344,23 +350,24 @@ def learn_from_qlearning(**learn_args):
 
         rewards = []
         territories = []
-        map_size = 1.  # * replay.width * replay.height
+        map_size = 1. * replay.width * replay.height
         for i in range(replay.num_frames - 1):
             frame = replay.get_frame(i)
             next_frame = replay.get_frame(i + 1)
             territories.append(int(frame.total_player_territory(player)))
             frame_reward = \
                 frame.total_player_strength(player) / 255 + \
-                frame.total_player_production(player) / 20
+                frame.total_player_production(player) / 20 + \
+                frame.total_player_territory(player)
             next_frame_reward = \
                 next_frame.total_player_strength(player) / 255 + \
-                next_frame.total_player_production(player) / 20
-            rewards.append(
-                (1. * (next_frame_reward - frame_reward)) / map_size)
-        # additional reward signal if player won/lost (is this needed???)
-        rewards[-1] += 1.0 if player == replay.winner else -1.0
-        log(logger.info, '#frames={}, max territory={}'.format(
-            replay.num_frames, max(territories)))
+                next_frame.total_player_production(player) / 20 + \
+                next_frame.total_player_territory(player)
+            rewards.append(next_frame_reward - frame_reward)
+        rewards = np.array(rewards, dtype=np.float)
+        rewards /= map_size
+        log(logger.info, '#frames={}, max territory={}, input={}'.format(
+            replay.num_frames, max(territories), X.shape))
         log(logger.info, rewards)
 
         loss = __qlearn_model(model, X, Y, territories, rewards, **learn_args)
