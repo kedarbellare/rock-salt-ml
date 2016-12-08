@@ -16,7 +16,7 @@ from learn.features import \
 from sklearn.model_selection import ShuffleSplit
 from utils.hlt import Move, Square, DIRECTIONS
 from utils.logging import logging, log
-from utils.replay import from_local, from_s3
+from utils.replay import from_local, from_s3, to_s3
 
 nb_classes = len(DIRECTIONS)
 FEATURE_TYPE_PROCESSOR = {
@@ -334,6 +334,8 @@ def learn_from_qlearning(**learn_args):
         replay_name, _ = game_outputs[2].split()
         if game_outputs[3] == '1 1':
             wins += 1
+            # save hlt to replays
+            to_s3('replays', replay_name)
 
         # get the replay
         replay = from_local(replay_name)
@@ -374,6 +376,11 @@ def learn_from_qlearning(**learn_args):
         save_model(model, **learn_args)
         log(logger.info, "Epoch {}/{} | Loss {:.4f} | Win count {}".format(
             epoch + 1, nb_epochs, loss, wins))
+
+        if (epoch + 1) % 20 == 0:
+            # save model and replay log to s3
+            to_s3('models', '%s.h5' % learn_args['model_prefix'])
+            to_s3('replays', 'replay.log')
 
         if curr_eps > end_eps and epoch >= observe:
             curr_eps -= eps_delta

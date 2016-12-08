@@ -1,10 +1,15 @@
 import boto
 from boto.s3.key import Key
+from datetime import datetime
 import gzip
+import shutil
 import numpy as np
 import ujson as json
 
+from utils.logging import logging, log
+
 conn = None
+logger = logging.getLogger(__name__)
 
 
 class HaliteReplayFrame(object):
@@ -140,10 +145,14 @@ class HaliteReplay(object):
         )
 
 
-def from_s3(fname):
+def __create_s3_connection():
     global conn
     if conn is None:
         conn = boto.connect_s3()
+
+
+def from_s3(fname):
+    __create_s3_connection()
     bucket = conn.get_bucket('halitereplaybucket')
     k = Key(bucket)
     k.key = fname
@@ -157,3 +166,32 @@ def from_s3(fname):
 
 def from_local(fname):
     return HaliteReplay(json.load(open(fname)))
+
+
+def __get_full_path(prefix, fname):
+    return '{}/{}/{}.gz'.format(
+        prefix, datetime.now().strftime('%Y%m%d%H%M'), fname)
+
+
+def __compress_file(fname):
+    with open(fname, 'rb') as fin:
+        with gzip.open('{}.gz'.format(fname), 'wb') as fout:
+            shutil.copyfileobj(fin, fout)
+
+
+def percent_cb(complete, total):
+    import sys
+    sys.stdout.write('.')
+    sys.stdout.flush()
+
+
+def to_s3(folder, fname):
+    __create_s3_connection()
+    __compress_file(fname)
+    bucket = conn.get_bucket('halite')
+    k = Key(bucket)
+    k.key = __get_full_path(folder, fname)
+    log(logger.info, 'Uploading {} to S3 {}...'.format(fname, folder))
+    k.set_contents_from_filename('%s.gz' % fname, cb=percent_cb, num_cb=10)
+    k.close()
+    log(logger.info, 'Done.')
