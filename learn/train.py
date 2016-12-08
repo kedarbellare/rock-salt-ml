@@ -377,7 +377,7 @@ def learn_from_qlearning(**learn_args):
         log(logger.info, "Epoch {}/{} | Loss {:.4f} | Win count {}".format(
             epoch + 1, nb_epochs, loss, wins))
 
-        if (epoch + 1) % 20 == 0:
+        if (epoch + 1) % 50 == 0:
             # save model and replay log to s3
             to_s3('models', '%s.h5' % learn_args['model_prefix'])
             to_s3('replays', 'replay.log')
