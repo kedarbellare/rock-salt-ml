@@ -294,8 +294,7 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
         Q_scores = model.predict(X)
         max_Q_scores = Q_scores.max(axis=1)
         move_Q_scores = Q_scores * Y
-        batch_rewards = np.zeros_like(Y_batch, dtype=float) + \
-            Q_scores[curr_indices]
+        batch_rewards = 1. * Q_scores[curr_indices]
         nonzero_q = max_Q_scores[curr_indices].nonzero()[0]
         num_nz += len(nonzero_q)
         num_samples += len(curr_indices)
@@ -312,7 +311,6 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
                 step_reward += discount * next_frame_q_max.sum()
             frame_q = move_Q_scores[frame_begin:frame_end]
             step_reward -= frame_q.sum()
-            step_reward /= territories[frame]
             batch_rewards[i] += Y_batch[i] * step_reward
         loss += model.train_on_batch(X_batch, batch_rewards)
         if (epoch + 1) % 20 == 0:
@@ -367,7 +365,7 @@ def learn_from_qlearning(**learn_args):
         if model is None:
             model = create_base_model(X, **learn_args)
             optimizer = Adam(lr=1e-7)
-            model.compile(loss='mse', optimizer='rmsprop')
+            model.compile(loss='mse', optimizer=optimizer)
 
         rewards = []
         territories = []
@@ -377,13 +375,13 @@ def learn_from_qlearning(**learn_args):
             next_frame = replay.get_frame(i + 1)
             territories.append(int(frame.total_player_territory(player)))
             frame_reward = \
+                frame.total_player_strength(player) / 255 + \
+                frame.total_player_production(player) / 20 + \
                 frame.total_player_territory(player)
-            # frame.total_player_strength(player) / 255 + \
-            # frame.total_player_production(player) / 20 + \
             next_frame_reward = \
+                next_frame.total_player_strength(player) / 255 + \
+                next_frame.total_player_production(player) / 20 + \
                 next_frame.total_player_territory(player)
-            # next_frame.total_player_strength(player) / 255 + \
-            # next_frame.total_player_production(player) / 20 + \
             rewards.append(next_frame_reward - frame_reward)
         rewards = np.array(rewards, dtype=np.float)
         rewards /= map_size
