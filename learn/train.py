@@ -24,6 +24,7 @@ FEATURE_TYPE_PROCESSOR = {
     'tile': process_frame_tile,
 }
 logger = logging.getLogger(__name__)
+np.set_printoptions(precision=3, linewidth=120)
 
 
 def get_linear_model(input_shape):
@@ -136,6 +137,7 @@ def load_model(**learn_args):
 
 def best_moves(model, frame, player, **learn_args):
     player_y, player_x = frame.player_yx(player)
+    player_borders = frame.borders(player)
     frame_processor = FEATURE_TYPE_PROCESSOR[learn_args['feature_type']]
     examples, _ = frame_processor(frame, player, window=learn_args['window'])
     qlearning = learn_args.get('qlearn')
@@ -146,10 +148,12 @@ def best_moves(model, frame, player, **learn_args):
     best_indices = np.argmax(model.predict(X), axis=1)
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
-        if qlearning and np.random.random() < eps:
-            direction = random.choice(DIRECTIONS)
-        else:
-            direction = DIRECTIONS[i]
+        direction = DIRECTIONS[i]
+        if qlearning:
+            is_border = player_borders[y, x]
+            xy_eps = eps * 1.5 if is_border else eps
+            if np.random.random() < xy_eps:
+                direction = random.choice(DIRECTIONS)
         moves.append(Move(Square(x, y, 0, 0, 0), direction))
     return moves
 
@@ -310,20 +314,21 @@ def learn_from_qlearning(**learn_args):
     start_eps = learn_args['start_eps']
     end_eps = learn_args['end_eps']
     nb_epochs = learn_args['epochs']
-    eps_delta = (start_eps - end_eps) / nb_epochs
-    wins = 0
-    observe = 0
+    observe = nb_epochs / 2
+    eps_delta = (start_eps - end_eps) / observe
     curr_eps = start_eps
     model = None
     player = 1  # the first player is always us
+    wins = 0  # count the number of times player wins
     for epoch in range(nb_epochs):
         learn_args['curr_epoch'] = epoch
         learn_args['curr_eps'] = curr_eps
         store_params(learn_args)
 
         # play the game
+        # TODO: revert use of fixed seed
         proc = subprocess.run(
-            './halite -d "30 30" -t -q '
+            './halite -d "30 30" -t -q -s 1559383297 '
             '"python3 MyBot.py" "python3 OverkillBot.py"',
             shell=True,
             check=True,
@@ -347,7 +352,7 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            optimizer = Adam(lr=1e-8)
+            optimizer = Adam(lr=1e-7)
             model.compile(loss='mse', optimizer=optimizer)
 
         rewards = []
@@ -377,12 +382,12 @@ def learn_from_qlearning(**learn_args):
         log(logger.info, "Epoch {}/{} | Loss {:.4f} | Win count {}".format(
             epoch + 1, nb_epochs, loss, wins))
 
-        if (epoch + 1) % 50 == 0:
+        if (epoch + 1) % 200 == 0:
             # save model and replay log to s3
             to_s3('models', '%s.h5' % learn_args['model_prefix'])
             to_s3('replays', 'replay.log')
 
-        if curr_eps > end_eps and epoch >= observe:
+        if curr_eps > end_eps and epoch < observe:
             curr_eps -= eps_delta
 
 

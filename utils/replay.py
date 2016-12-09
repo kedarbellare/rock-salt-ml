@@ -4,12 +4,19 @@ from datetime import datetime
 import gzip
 import shutil
 import numpy as np
+from scipy.ndimage.filters import convolve
 import ujson as json
 
 from utils.logging import logging, log
 
 conn = None
 logger = logging.getLogger(__name__)
+
+neighbor_mask = np.array([
+    [0, 1, 0],
+    [1, 0, 1],
+    [0, 1, 0],
+])
 
 
 class HaliteReplayFrame(object):
@@ -43,6 +50,13 @@ class HaliteReplayFrame(object):
 
     def competitor_positions(self, player):
         return self.owned_positions & (self.owners != player)
+
+    def borders(self, player):
+        return convolve(
+            np.asarray(self.nonplayer_positions(player), dtype=int),
+            neighbor_mask,
+            mode='wrap'
+        ) > 0
 
     @property
     def unowned_positions(self):
