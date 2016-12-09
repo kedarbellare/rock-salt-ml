@@ -14,7 +14,7 @@ from learn.features import \
     process_frame_axes, process_frame_tile, \
     process_replay
 from sklearn.model_selection import ShuffleSplit
-from utils.hlt import Move, Square, DIRECTIONS
+from utils.hlt import Move, Square, DIRECTIONS, STILL
 from utils.logging import logging, log
 from utils.replay import from_local, from_s3, to_s3
 
@@ -146,6 +146,7 @@ def best_moves(model, frame, player, **learn_args):
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
     eps = learn_args.get('curr_eps', 0.0)
     best_indices = model.predict(X).argmax(axis=1)
+    dir_probs = [.8 if d == STILL else .05 for d in DIRECTIONS]
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
@@ -153,7 +154,7 @@ def best_moves(model, frame, player, **learn_args):
             is_border = player_borders[y, x]
             xy_eps = eps * 1.2 if is_border else eps
             if np.random.random() < xy_eps:
-                direction = random.choice(DIRECTIONS)
+                direction = np.random.choice(DIRECTIONS, p=dir_probs)
         moves.append(Move(Square(x, y, 0, 0, 0), direction))
     return moves
 
