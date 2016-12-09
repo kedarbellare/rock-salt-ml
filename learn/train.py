@@ -145,13 +145,13 @@ def best_moves(model, frame, player, **learn_args):
     if learn_args['linear']:
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
     eps = learn_args.get('curr_eps', 0.0)
-    best_indices = np.argmax(model.predict(X), axis=1)
+    best_indices = model.predict(X).argmax(axis=1)
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
         if qlearning:
             is_border = player_borders[y, x]
-            xy_eps = eps * 1.5 if is_border else eps
+            xy_eps = eps * 1.2 if is_border else eps
             if np.random.random() < xy_eps:
                 direction = random.choice(DIRECTIONS)
         moves.append(Move(Square(x, y, 0, 0, 0), direction))
@@ -273,40 +273,53 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     cumulative_territories = [
         sum(territories[:i]) for i in range(1, len(territories) + 1)
     ]
+    frame_ends = cumulative_territories
+    frame_begins = [0] + cumulative_territories[:-1]
     discount = learn_args['gamma']
-    indices = list(range(X.shape[0]))
-    random.shuffle(indices)
+    num_frames = len(territories)
     batch_size = learn_args['batch_size']
     loss = 0.0
+    num_nz = 0
     num_learn_samples = min(X.shape[0], batch_size * 250)
+    num_samples = 0
     for epoch, start in enumerate(range(0, num_learn_samples, batch_size)):
-        begin, end = start, start + batch_size
-        curr_indices = indices[begin:end]
+        frame_indices = np.random.randint(0, num_frames, size=batch_size)
+        curr_indices = [
+            np.random.randint(frame_begins[frame], frame_ends[frame])
+            for frame in frame_indices
+        ]
         X_batch = X[curr_indices]
         Y_batch = Y[curr_indices]
         Q_scores = model.predict(X)
-        batch_rewards = np.zeros_like(Y_batch, dtype=float)
-        batch_rewards += Q_scores[curr_indices]
+        max_Q_scores = Q_scores.max(axis=1)
+        move_Q_scores = Q_scores * Y
+        batch_rewards = np.zeros_like(Y_batch, dtype=float) + \
+            Q_scores[curr_indices]
+        nonzero_q = max_Q_scores[curr_indices].nonzero()[0]
+        num_nz += len(nonzero_q)
+        num_samples += len(curr_indices)
         for i, idx in enumerate(curr_indices):
             frame = bisect_right(cumulative_territories, idx)
-            frame_begin = 0 if frame == 0 else \
-                cumulative_territories[frame - 1]
-            frame_end = cumulative_territories[frame]
+            frame_begin = frame_begins[frame]
+            frame_end = frame_ends[frame]
             step_reward = rewards[frame]
             if frame < len(territories) - 1:
-                next_frame_begin = frame_end
-                next_frame_end = cumulative_territories[frame + 1]
-                next_frame_q = Q_scores[next_frame_begin:next_frame_end]
-                step_reward += discount * np.sum(np.max(next_frame_q, axis=1))
-            frame_q = Q_scores[frame_begin:frame_end] * \
-                Y[frame_begin:frame_end]
-            step_reward -= np.sum(frame_q)
+                next_frame_begin = frame_begins[frame + 1]
+                next_frame_end = frame_ends[frame + 1]
+                next_frame_q_max = \
+                    max_Q_scores[next_frame_begin:next_frame_end]
+                step_reward += discount * next_frame_q_max.sum()
+            frame_q = move_Q_scores[frame_begin:frame_end]
+            step_reward -= frame_q.sum()
             step_reward /= territories[frame]
             batch_rewards[i] += Y_batch[i] * step_reward
         loss += model.train_on_batch(X_batch, batch_rewards)
         if (epoch + 1) % 20 == 0:
-            print('Loss: {:.4f} #samples={} ...  '.format(loss, end), end='')
+            print('Loss: {:.4f} #samples={} #nonzeroQ={} ...  '.format(
+                loss, num_samples, num_nz), end='')
             sys.stdout.flush()
+    print('Loss: {:.4f} #samples={} #nonzeroQ={} ...  '.format(
+        loss, num_samples, num_nz))
     return loss
 
 
