@@ -146,7 +146,11 @@ def best_moves(model, frame, player, **learn_args):
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
     eps = learn_args.get('curr_eps', 0.0)
     best_indices = model.predict(X).argmax(axis=1)
-    dir_probs = [.8 if d == STILL else .05 for d in DIRECTIONS]
+    still_prob = .6
+    dir_probs = [
+        still_prob if d == STILL else (1 - still_prob) / 4
+        for d in DIRECTIONS
+    ]
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
@@ -282,13 +286,13 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     batch_size = learn_args['batch_size']
     loss = 0.0
     num_nz = 0
-    num_learn_samples = min(X.shape[0], batch_size * 250)
     num_samples = 0
-    for epoch, start in enumerate(range(0, num_learn_samples, batch_size)):
-        random.shuffle(frame_indices)
+    max_memory = 50
+    for frame_i in range(num_frames):
         curr_indices = [
             np.random.randint(frame_begins[frame], frame_ends[frame])
-            for frame in frame_indices[:batch_size]
+            for frame in np.random.randint(
+                max(0, frame_i + 1 - max_memory), frame_i + 1, size=batch_size)
         ]
         X_batch = X[curr_indices]
         Y_batch = Y[curr_indices]
@@ -304,7 +308,7 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
             frame_begin = frame_begins[frame]
             frame_end = frame_ends[frame]
             step_reward = rewards[frame]
-            if frame < len(territories) - 1:
+            if frame < num_frames - 1:
                 next_frame_begin = frame_begins[frame + 1]
                 next_frame_end = frame_ends[frame + 1]
                 next_frame_q_max = \
@@ -314,7 +318,7 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
             step_reward -= frame_q.sum()
             batch_rewards[i] += Y_batch[i] * step_reward
         loss += model.train_on_batch(X_batch, batch_rewards)
-        if (epoch + 1) % 20 == 0:
+        if (frame_i + 1) % 20 == 0:
             print('Loss: {:.4f} #samples={} #nonzeroQ={} ...  '.format(
                 loss, num_samples, num_nz), end='')
             sys.stdout.flush()
@@ -366,7 +370,7 @@ def learn_from_qlearning(**learn_args):
         if model is None:
             model = create_base_model(X, **learn_args)
             optimizer = Adam(lr=1e-7)
-            model.compile(loss='mse', optimizer=optimizer)
+            model.compile(loss='mse', optimizer='adam')
 
         rewards = []
         territories = []
