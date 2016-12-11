@@ -50,12 +50,20 @@ def get_cnn2d_model(input_shape):
     Only compatible with 2-dimensional tile-based features
     """
     return Sequential([
-        Convolution2D(32, 5, 5,
+        Convolution2D(128, 3, 3,
                       border_mode='valid', dim_ordering='th',
                       activation='relu', input_shape=input_shape),
         Dropout(0.25),
+        Convolution2D(64, 3, 3,
+                      border_mode='valid', dim_ordering='th',
+                      activation='relu'),
+        Dropout(0.1),
+        Convolution2D(32, 3, 3,
+                      border_mode='valid', dim_ordering='th',
+                      activation='relu'),
+        Dropout(0.1),
         Flatten(),
-        Dense(16, activation='relu'),
+        Dense(128, activation='relu'),
         Dropout(0.25),
         Dense(nb_classes),
     ])
