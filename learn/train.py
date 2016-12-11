@@ -119,7 +119,7 @@ def create_model(X, **learn_args):
     optimizer = Adam(lr=1e-5)
     model.compile(
         loss='categorical_crossentropy',
-        optimizer=optimizer,
+        optimizer='nadam',
         metrics=['accuracy']
     )
     return model
