@@ -7,6 +7,7 @@ import subprocess
 import ujson as json
 
 from learn.keras_utils import np_utils, models, ModelCheckpoint, Sequential
+from learn.keras_utils import model_from_yaml
 from learn.keras_utils import Activation, Convolution1D, Convolution2D, \
     Dense, Dropout, Flatten
 from learn.keras_utils import Adam
@@ -132,7 +133,9 @@ def store_params(learn_args):
 
 def save_model(model, **learn_args):
     log(logger.info, '>>> Saving model...')
-    model.save('%s.h5' % learn_args['model_prefix'])
+    with open('%s.yaml' % learn_args['model_prefix'], 'w') as fout:
+        fout.write(model.to_yaml())
+    model.save_weights('%s.h5' % learn_args['model_prefix'])
     log(logger.info, 'Done.')
 
 
@@ -140,7 +143,10 @@ def load_model(**learn_args):
     if learn_args.get('input_model'):
         return models.load_model(learn_args['input_model'])
     else:
-        return models.load_model('%s.h5' % learn_args['model_prefix'])
+        with open('%s.yaml' % learn_args['model_prefix']) as fin:
+            model = model_from_yaml(fin.read())
+        model.load_weights('%s.h5' % learn_args['model_prefix'])
+        return model
 
 
 def best_moves(model, frame, player, **learn_args):
@@ -159,6 +165,7 @@ def best_moves(model, frame, player, **learn_args):
         still_prob if d == STILL else (1 - still_prob) / 4
         for d in DIRECTIONS
     ]
+    # dir_probs = None
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
@@ -224,6 +231,7 @@ def learn_from_single_replay(input_file, **learn_args):
               validation_data=(X_test, Y_test))
     score = model.evaluate(X_test, Y_test, verbose=0)
     log(logger.info, 'Test score: {} accuracy: {}'.format(score[0], score[1]))
+    save_model(model, **learn_args)
 
 
 def iter_data(input_file, **learn_args):
@@ -354,7 +362,8 @@ def learn_from_qlearning(**learn_args):
         # TODO: revert use of fixed seed
         proc = subprocess.run(
             './halite -d "30 30" -t -q -s 1559383297 '
-            '"python3 MyBot.py" "python3 OverkillBot.py"',
+            '"THEANO_FLAGS=device=cpu,floatX=float32 python3 MyBot.py" '
+            '"python3 OverkillBot.py"',
             shell=True,
             check=True,
             stdout=subprocess.PIPE
@@ -362,7 +371,7 @@ def learn_from_qlearning(**learn_args):
         game_outputs = proc.stdout.decode('utf-8').split('\n')
         log(logger.info, '\n'.join(game_outputs))
         replay_name, _ = game_outputs[2].split()
-        if game_outputs[3] == '1 1':
+        if game_outputs[3].startswith('1 1'):
             wins += 1
             # save hlt to replays
             to_s3('replays', replay_name)

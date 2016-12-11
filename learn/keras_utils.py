@@ -8,7 +8,7 @@ sys.stderr = open('/dev/null', 'w')
 
 from keras import models
 from keras.callbacks import ModelCheckpoint
-from keras.models import Sequential
+from keras.models import Sequential, model_from_yaml
 from keras.layers import Dense, Activation, \
     Convolution1D, Convolution2D, Dropout, Flatten
 from keras.optimizers import SGD, RMSprop, Nadam, Adam
