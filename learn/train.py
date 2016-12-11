@@ -331,7 +331,7 @@ def learn_from_qlearning(**learn_args):
     start_eps = learn_args['start_eps']
     end_eps = learn_args['end_eps']
     nb_epochs = learn_args['epochs']
-    observe = nb_epochs / 2
+    observe = nb_epochs / 10
     eps_delta = (start_eps - end_eps) / observe
     curr_eps = start_eps
     model = None
@@ -370,7 +370,7 @@ def learn_from_qlearning(**learn_args):
         if model is None:
             model = create_base_model(X, **learn_args)
             optimizer = Adam(lr=1e-7)
-            model.compile(loss='mse', optimizer='adam')
+            model.compile(loss='mse', optimizer=optimizer)
 
         rewards = []
         territories = []
@@ -406,6 +406,8 @@ def learn_from_qlearning(**learn_args):
 
         if curr_eps > end_eps and epoch < observe:
             curr_eps -= eps_delta
+
+        subprocess.run('rm *.hlt *.hlt.gz', shell=True)
 
 
 @plac.annotations(
