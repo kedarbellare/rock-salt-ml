@@ -274,8 +274,7 @@ def learn_from_multiple_replays(input_file, **learn_args):
                     save_model(model, **learn_args)
             else:
                 score = model.evaluate(X, Y, verbose=0)
-                log(logger.info, 'Test score: {} accuracy: {}'.format(
-                    score[0], score[1]))
+                log(logger.info, 'Test score: {}'.format(score))
 
 
 def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
