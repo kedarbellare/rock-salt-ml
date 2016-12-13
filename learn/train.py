@@ -6,11 +6,11 @@ import random
 import subprocess
 import ujson as json
 
-from learn.keras_utils import np_utils, models, ModelCheckpoint, Sequential
+from learn.keras_utils import np_utils, models, Sequential
 from learn.keras_utils import model_from_yaml
 from learn.keras_utils import Activation, Convolution1D, Convolution2D, \
     Dense, Dropout, Flatten
-from learn.keras_utils import Adam
+from learn.keras_utils import Nadam
 from learn.features import \
     process_frame_axes, process_frame_tile, \
     process_replay
@@ -110,18 +110,9 @@ def create_base_model(X, **learn_args):
 
 
 def create_model(X, **learn_args):
-    base_model = create_base_model(X, **learn_args)
-    model = Sequential([
-        base_model,
-        Activation('softmax'),
-    ])
+    model = create_base_model(X, **learn_args)
     model.summary()
-    optimizer = Adam(lr=1e-5)
-    model.compile(
-        loss='categorical_crossentropy',
-        optimizer='nadam',
-        metrics=['accuracy']
-    )
+    model.compile(loss='mse', optimizer='nadam')
     return model
 
 
@@ -141,7 +132,10 @@ def save_model(model, **learn_args):
 
 def load_model(**learn_args):
     if learn_args.get('input_model'):
-        return models.load_model(learn_args['input_model'])
+        with open('%s.yaml' % learn_args['model_prefix']) as fin:
+            model = model_from_yaml(fin.read())
+        model.load_weights(learn_args['input_model'])
+        return model
     else:
         with open('%s.yaml' % learn_args['model_prefix']) as fin:
             model = model_from_yaml(fin.read())
@@ -160,12 +154,15 @@ def best_moves(model, frame, player, **learn_args):
         X = X.reshape(X.shape[0], np.prod(X.shape[1:]))
     eps = learn_args.get('curr_eps', 0.0)
     best_indices = model.predict(X).argmax(axis=1)
-    still_prob = .6
-    dir_probs = [
-        still_prob if d == STILL else (1 - still_prob) / 4
-        for d in DIRECTIONS
-    ]
-    # dir_probs = None
+    if learn_args.get('rnd_still_moves'):
+        still_prob = .6
+        dir_probs = [
+            still_prob if d == STILL else (1 - still_prob) / 4
+            for d in DIRECTIONS
+        ]
+    else:
+        dir_probs = None
+
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
@@ -195,6 +192,7 @@ def get_XY(replay, player, **learn_args):
 
 def get_train_test_data(replay, player, **learn_args):
     X, Y = get_XY(replay, player, **learn_args)
+    Y *= learn_args.get('y_scale', 1.0)
 
     # create splits for train/test
     kf = ShuffleSplit(
@@ -220,17 +218,10 @@ def learn_from_single_replay(input_file, **learn_args):
 
     # create model
     model = create_model(X_train, **learn_args)
-    model.fit(X_train, Y_train, nb_epoch=20, verbose=1,
-              callbacks=[ModelCheckpoint(
-                  filepath='%s.h5' % learn_args['model_prefix'],
-                  monitor='val_acc',
-                  save_best_only=True,
-                  mode='max',
-                  verbose=0
-              )],
+    model.fit(X_train, Y_train, nb_epoch=10, verbose=1,
               validation_data=(X_test, Y_test))
     score = model.evaluate(X_test, Y_test, verbose=0)
-    log(logger.info, 'Test score: {} accuracy: {}'.format(score[0], score[1]))
+    log(logger.info, 'Test score: {}'.format(score))
     save_model(model, **learn_args)
 
 
@@ -298,48 +289,53 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     frame_begins = [0] + cumulative_territories[:-1]
     discount = learn_args['gamma']
     num_frames = len(territories)
-    frame_indices = list(range(num_frames))
     batch_size = learn_args['batch_size']
     loss = 0.0
-    num_nz = 0
     num_samples = 0
-    max_memory = 50
-    for frame_i in range(num_frames):
-        curr_indices = [
-            np.random.randint(frame_begins[frame], frame_ends[frame])
-            for frame in np.random.randint(
-                max(0, frame_i + 1 - max_memory), frame_i + 1, size=batch_size)
-        ]
-        X_batch = X[curr_indices]
-        Y_batch = Y[curr_indices]
+    max_memory = learn_args['max_memory']
+
+    for epoch in range(3):
         Q_scores = model.predict(X)
         max_Q_scores = Q_scores.max(axis=1)
         move_Q_scores = Q_scores * Y
-        batch_rewards = 1. * Q_scores[curr_indices]
-        nonzero_q = max_Q_scores[curr_indices].nonzero()[0]
-        num_nz += len(nonzero_q)
-        num_samples += len(curr_indices)
-        for i, idx in enumerate(curr_indices):
-            frame = bisect_right(cumulative_territories, idx)
-            frame_begin = frame_begins[frame]
-            frame_end = frame_ends[frame]
-            step_reward = rewards[frame]
-            if frame < num_frames - 1:
-                next_frame_begin = frame_begins[frame + 1]
-                next_frame_end = frame_ends[frame + 1]
-                next_frame_q_max = \
-                    max_Q_scores[next_frame_begin:next_frame_end]
-                step_reward += discount * next_frame_q_max.sum()
-            frame_q = move_Q_scores[frame_begin:frame_end]
-            step_reward -= frame_q.sum()
-            batch_rewards[i] += Y_batch[i] * step_reward
-        loss += model.train_on_batch(X_batch, batch_rewards)
-        if (frame_i + 1) % 20 == 0:
-            print('Loss: {:.4f} #samples={} #nonzeroQ={} ...  '.format(
-                loss, num_samples, num_nz), end='')
-            sys.stdout.flush()
-    print('Loss: {:.4f} #samples={} #nonzeroQ={} ...  '.format(
-        loss, num_samples, num_nz))
+
+        for frame_i in range(num_frames):
+            mem_begin = max(0, frame_i + 1 - max_memory)
+            mem_end = frame_i + 1
+            curr_indices = [
+                np.random.randint(frame_begins[frame], frame_ends[frame])
+                for frame in np.random.choice(
+                    np.arange(mem_begin, mem_end),
+                    replace=False,
+                    size=min(batch_size, mem_end - mem_begin)
+                )
+            ]
+            X_batch = X[curr_indices]
+            Y_batch = Y[curr_indices]
+            batch_rewards = 1. * Q_scores[curr_indices]
+            nonzero_q = max_Q_scores[curr_indices].nonzero()[0]
+            num_samples += len(curr_indices)
+            for i, idx in enumerate(curr_indices):
+                frame = bisect_right(cumulative_territories, idx)
+                frame_begin = frame_begins[frame]
+                frame_end = frame_ends[frame]
+                step_reward = rewards[frame]
+                if frame < num_frames - 1:
+                    next_frame_begin = frame_begins[frame + 1]
+                    next_frame_end = frame_ends[frame + 1]
+                    next_frame_q_max = \
+                        max_Q_scores[next_frame_begin:next_frame_end]
+                    step_reward += discount * next_frame_q_max.sum()
+                frame_q = move_Q_scores[frame_begin:frame_end]
+                step_reward -= frame_q.sum()
+                batch_rewards[i] += Y_batch[i] * step_reward
+            loss += model.train_on_batch(X_batch, batch_rewards)
+            if (frame_i + 1) % 20 == 0:
+                print('Loss: {:.4f} #samples={} ...  '.format(
+                    loss, num_samples), end='')
+                sys.stdout.flush()
+    print('Loss: {:.4f} #samples={} ...  '.format(
+        loss, num_samples))
     return loss
 
 
@@ -361,7 +357,7 @@ def learn_from_qlearning(**learn_args):
         # play the game
         # TODO: revert use of fixed seed
         proc = subprocess.run(
-            './halite -d "30 30" -t -q -s 1559383297 '
+            './halite -d "30 30" -t -q '
             '"THEANO_FLAGS=device=cpu,floatX=float32 python3 MyBot.py" '
             '"python3 OverkillBot.py"',
             shell=True,
@@ -386,25 +382,27 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            optimizer = Adam(lr=1e-7)
-            model.compile(loss='mse', optimizer=optimizer)
+            model.compile(loss='mse', optimizer=Nadam(lr=1e-5))
 
         rewards = []
         territories = []
-        map_size = 1. * replay.width * replay.height
+        map_size = 2.  # * replay.width * replay.height
         for i in range(replay.num_frames - 1):
             frame = replay.get_frame(i)
             next_frame = replay.get_frame(i + 1)
             territories.append(int(frame.total_player_territory(player)))
-            frame_reward = \
-                frame.total_player_strength(player) / 255 + \
-                frame.total_player_production(player) / 20 + \
-                frame.total_player_territory(player)
-            next_frame_reward = \
-                next_frame.total_player_strength(player) / 255 + \
-                next_frame.total_player_production(player) / 20 + \
-                next_frame.total_player_territory(player)
-            rewards.append(next_frame_reward - frame_reward)
+            frame_production = \
+                frame.total_player_production(player) / 20
+            next_frame_production = \
+                next_frame.total_player_production(player) / 20
+            frame_strength = \
+                frame.total_player_strength(player) / 255
+            next_frame_strength = \
+                next_frame.total_player_strength(player) / 255
+            rewards.append(
+                # (next_frame_strength - frame_strength) +
+                (next_frame_production - frame_production)
+            )
         rewards = np.array(rewards, dtype=np.float)
         rewards /= map_size
         log(logger.info, '#frames={}, max territory={}, input={}'.format(
@@ -446,6 +444,10 @@ def learn_from_qlearning(**learn_args):
     start_eps=('Starting epsilon', 'option'),
     end_eps=('Ending epsilon', 'option'),
     epochs=('Number of training epochs', 'option'),
+    max_memory=('Size of replay memory', 'option'),
+    y_scale=('Scaling of move output for learning', 'option'),
+    rnd_still_moves=('Bias random moves towards STILL (instead of uniform)',
+                   'flag', 'u'),
 )
 def learn(
     input_file,
@@ -464,6 +466,9 @@ def learn(
     start_eps=0.5,
     end_eps=0.1,
     epochs=1000,
+    max_memory=20,
+    y_scale=0.1,
+    rnd_still_moves=False,
 ):
     learn_args = {
         'linear': model_type in ('linear', 'mlp'),
@@ -481,6 +486,9 @@ def learn(
         'start_eps': float(start_eps),
         'end_eps': float(end_eps),
         'epochs': int(epochs),
+        'max_memory': int(max_memory),
+        'y_scale': float(y_scale),
+        'rnd_still_moves': rnd_still_moves,
     }
     store_params(learn_args)
 
