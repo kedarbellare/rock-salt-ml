@@ -37,7 +37,7 @@ def get_linear_model(input_shape):
 def get_mlp_model(input_shape):
     return Sequential([
         Dense(512, activation='relu', input_shape=input_shape),
-        Dropout(0.25),
+        Dropout(0.1),
         Dense(256, activation='relu'),
         Dropout(0.1),
         Dense(128, activation='relu'),
@@ -110,9 +110,18 @@ def create_base_model(X, **learn_args):
 
 
 def create_model(X, **learn_args):
+    scale = learn_args.get('y_scale')
     model = create_base_model(X, **learn_args)
-    model.summary()
-    model.compile(loss='mse', optimizer='nadam')
+    if scale > 0.0:
+        model.compile(loss='mae', optimizer='nadam')
+    else:
+        model = Sequential([model, Activation('softmax')])
+        model.summary()
+        model.compile(
+            loss='categorical_crossentropy',
+            optimizer='nadam',
+            metrics=['accuracy']
+        )
     return model
 
 
@@ -191,8 +200,10 @@ def get_XY(replay, player, **learn_args):
 
 
 def get_train_test_data(replay, player, **learn_args):
+    scale = learn_args.get('y_scale')
     X, Y = get_XY(replay, player, **learn_args)
-    Y *= learn_args.get('y_scale', 1.0)
+    if scale is not None and scale > 0.0:
+        Y = scale * (2 * Y - 1)
 
     # create splits for train/test
     kf = ShuffleSplit(
@@ -289,6 +300,7 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     discount = learn_args['gamma']
     num_frames = len(territories)
     batch_size = learn_args['batch_size']
+    indices = list(range(X.shape[0]))
     loss = 0.0
     num_samples = 0
     max_memory = learn_args['max_memory']
@@ -297,22 +309,13 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
         Q_scores = model.predict(X)
         max_Q_scores = Q_scores.max(axis=1)
         move_Q_scores = Q_scores * Y
+        random.shuffle(indices)
 
-        for frame_i in range(num_frames):
-            mem_begin = max(0, frame_i + 1 - max_memory)
-            mem_end = frame_i + 1
-            curr_indices = [
-                np.random.randint(frame_begins[frame], frame_ends[frame])
-                for frame in np.random.choice(
-                    np.arange(mem_begin, mem_end),
-                    replace=False,
-                    size=min(batch_size, mem_end - mem_begin)
-                )
-            ]
+        for batch_start in range(0, len(indices), batch_size):
+            curr_indices = indices[batch_start:batch_start+batch_size]
             X_batch = X[curr_indices]
             Y_batch = Y[curr_indices]
             batch_rewards = 1. * Q_scores[curr_indices]
-            nonzero_q = max_Q_scores[curr_indices].nonzero()[0]
             num_samples += len(curr_indices)
             for i, idx in enumerate(curr_indices):
                 frame = bisect_right(cumulative_territories, idx)
@@ -329,7 +332,7 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
                 step_reward -= frame_q.sum()
                 batch_rewards[i] += Y_batch[i] * step_reward
             loss += model.train_on_batch(X_batch, batch_rewards)
-            if (frame_i + 1) % 20 == 0:
+            if num_samples % 50 == 0:
                 print('Loss: {:.4f} #samples={} ...  '.format(
                     loss, num_samples), end='')
                 sys.stdout.flush()
@@ -356,7 +359,7 @@ def learn_from_qlearning(**learn_args):
         # play the game
         # TODO: revert use of fixed seed
         proc = subprocess.run(
-            './halite -d "30 30" -t -q '
+            './halite -d "30 30" -t -q -s 1559383297 '
             '"THEANO_FLAGS=device=cpu,floatX=float32 python3 MyBot.py" '
             '"python3 OverkillBot.py"',
             shell=True,
@@ -381,11 +384,11 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            model.compile(loss='mse', optimizer=Nadam(lr=1e-5))
+            model.compile(loss='mae', optimizer=Nadam(lr=1e-3))
 
         rewards = []
         territories = []
-        map_size = 2.  # * replay.width * replay.height
+        map_size = 3.  # * replay.width * replay.height
         for i in range(replay.num_frames - 1):
             frame = replay.get_frame(i)
             next_frame = replay.get_frame(i + 1)
@@ -398,8 +401,13 @@ def learn_from_qlearning(**learn_args):
                 frame.total_player_strength(player) / 255
             next_frame_strength = \
                 next_frame.total_player_strength(player) / 255
+            frame_territory = \
+                frame.total_player_territory(player)
+            next_frame_territory = \
+                next_frame.total_player_territory(player)
             rewards.append(
-                # (next_frame_strength - frame_strength) +
+                (next_frame_territory - frame_territory) +
+                (next_frame_strength - frame_strength) +
                 (next_frame_production - frame_production)
             )
         rewards = np.array(rewards, dtype=np.float)
@@ -466,7 +474,7 @@ def learn(
     end_eps=0.1,
     epochs=1000,
     max_memory=20,
-    y_scale=0.1,
+    y_scale=0.0,
     rnd_still_moves=False,
 ):
     learn_args = {
