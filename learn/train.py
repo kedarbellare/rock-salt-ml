@@ -283,6 +283,9 @@ def learn_from_multiple_replays(input_file, **learn_args):
                     log(logger.info, 'Processed: {} samples'.format(
                         num_samples_seen))
                     save_model(model, **learn_args)
+                    # save model and replay log to s3
+                    to_s3('models', '%s.h5' % learn_args['model_prefix'])
+                    to_s3('replays', 'replay.log')
             else:
                 score = model.evaluate(X, Y, verbose=0)
                 log(logger.info, 'Test score: {}'.format(score))

@@ -1,10 +1,11 @@
+import os
 import sys
 
 # HACK: keras prints to stdout which messes with halite
 stdout = sys.stdout
 stderr = sys.stderr
-sys.stdout = open('/dev/null', 'w')
-sys.stderr = open('/dev/null', 'w')
+sys.stdout = open(os.devnull, 'w')
+sys.stderr = open(os.devnull, 'w')
 
 from keras import models
 from keras.callbacks import ModelCheckpoint
