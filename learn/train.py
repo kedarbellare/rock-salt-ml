@@ -10,13 +10,14 @@ from learn.keras_utils import np_utils, models, Sequential
 from learn.keras_utils import model_from_yaml
 from learn.keras_utils import Activation, Convolution1D, Convolution2D, \
     Dense, Dropout, Flatten
-from learn.keras_utils import Nadam
+from learn.keras_utils import Adam
 from learn.features import \
     process_frame_axes, process_frame_tile, \
     process_replay
 from sklearn.model_selection import ShuffleSplit
 from utils.hlt import Move, Square, DIRECTIONS, STILL
 from utils.logging import logging, log
+from utils.overkill import get_move
 from utils.replay import from_local, from_s3, to_s3
 
 nb_classes = len(DIRECTIONS)
@@ -113,13 +114,13 @@ def create_model(X, **learn_args):
     scale = learn_args.get('y_scale')
     model = create_base_model(X, **learn_args)
     if scale > 0.0:
-        model.compile(loss='mae', optimizer='nadam')
+        model.compile(loss='mse', optimizer=Adam(1e-5))
     else:
         model = Sequential([model, Activation('softmax')])
         model.summary()
         model.compile(
             loss='categorical_crossentropy',
-            optimizer='nadam',
+            optimizer=Adam(1e-5),
             metrics=['accuracy']
         )
     return model
@@ -152,7 +153,7 @@ def load_model(**learn_args):
         return model
 
 
-def best_moves(model, frame, player, **learn_args):
+def best_moves(model, game_map, frame, player, **learn_args):
     player_y, player_x = frame.player_yx(player)
     player_borders = frame.borders(player)
     frame_processor = FEATURE_TYPE_PROCESSOR[learn_args['feature_type']]
@@ -172,15 +173,24 @@ def best_moves(model, frame, player, **learn_args):
     else:
         dir_probs = None
 
+    curr_epoch = learn_args.get('curr_epoch', 0)
+    xy_to_square = {
+        (sq.x, sq.y): sq for sq in game_map if sq.owner == player
+    }
     moves = []
     for x, y, i in zip(player_x, player_y, best_indices):
         direction = DIRECTIONS[i]
+        square = xy_to_square[(x, y)]
         if qlearning:
             is_border = player_borders[y, x]
             xy_eps = eps * 1.2 if is_border else eps
             if np.random.random() < xy_eps:
-                direction = np.random.choice(DIRECTIONS, p=dir_probs)
-        moves.append(Move(Square(x, y, 0, 0, 0), direction))
+                if curr_epoch < learn_args.get('observe'):
+                    overkill_move = get_move(game_map, square, player)
+                    direction = overkill_move.direction
+                else:
+                    direction = np.random.choice(DIRECTIONS, p=dir_probs)
+        moves.append(Move(square, direction))
     return moves
 
 
@@ -308,14 +318,28 @@ def __qlearn_model(model, X, Y, territories, rewards, **learn_args):
     num_samples = 0
     max_memory = learn_args['max_memory']
 
-    for epoch in range(3):
+    for epoch in range(1):
         Q_scores = model.predict(X)
         max_Q_scores = Q_scores.max(axis=1)
         move_Q_scores = Q_scores * Y
         random.shuffle(indices)
 
-        for batch_start in range(0, len(indices), batch_size):
-            curr_indices = indices[batch_start:batch_start+batch_size]
+        for frame_i in range(num_frames):
+            mem_begin = max(0, frame_i + 1 - max_memory)
+            mem_end = frame_i + 1
+            curr_indices = [
+                np.random.randint(frame_begins[frame],
+                                  frame_ends[frame])
+                for frame in np.random.choice(
+                    np.arange(mem_begin, mem_end),
+                    replace=False,
+                    size=min(batch_size, mem_end - mem_begin)
+                )
+            ]
+            """
+            for batch_start in range(0, len(indices), batch_size):
+            curr_indices = indices[batch_start:batch_start + batch_size]
+            """
             X_batch = X[curr_indices]
             Y_batch = Y[curr_indices]
             batch_rewards = 1. * Q_scores[curr_indices]
@@ -375,7 +399,7 @@ def learn_from_qlearning(**learn_args):
         if game_outputs[3].startswith('1 1'):
             wins += 1
             # save hlt to replays
-            to_s3('replays', replay_name)
+            # to_s3('replays', replay_name)
 
         # get the replay
         replay = from_local(replay_name)
@@ -387,11 +411,11 @@ def learn_from_qlearning(**learn_args):
         X, Y = get_XY(replay, player, **learn_args)
         if model is None:
             model = create_base_model(X, **learn_args)
-            model.compile(loss='mae', optimizer=Nadam(lr=1e-3))
+            model.compile(loss='mse', optimizer=Adam(lr=1e-9))
 
         rewards = []
         territories = []
-        map_size = 3.  # * replay.width * replay.height
+        map_size = 3. * replay.width * replay.height
         for i in range(replay.num_frames - 1):
             frame = replay.get_frame(i)
             next_frame = replay.get_frame(i + 1)
@@ -427,7 +451,7 @@ def learn_from_qlearning(**learn_args):
         if (epoch + 1) % 200 == 0:
             # save model and replay log to s3
             to_s3('models', '%s.h5' % learn_args['model_prefix'])
-            to_s3('replays', 'replay.log')
+            # to_s3('replays', 'replay.log')
 
         if curr_eps > end_eps and epoch < observe:
             curr_eps -= eps_delta
@@ -450,6 +474,7 @@ def learn_from_qlearning(**learn_args):
     test_size=('Proportion of the data to use for validation', 'option'),
     batch_size=('Size of batch to use during training', 'option'),
     checkpoint_samples=('Number of samples to checkpoint', 'option'),
+    observe=('Number of samples to observe', 'option'),
     gamma=('Discounting factor for future rewards', 'option'),
     start_eps=('Starting epsilon', 'option'),
     end_eps=('Ending epsilon', 'option'),
@@ -476,6 +501,7 @@ def learn(
     start_eps=0.5,
     end_eps=0.1,
     epochs=1000,
+    observe=5000,
     max_memory=20,
     y_scale=0.0,
     rnd_still_moves=False,
@@ -496,6 +522,7 @@ def learn(
         'start_eps': float(start_eps),
         'end_eps': float(end_eps),
         'epochs': int(epochs),
+        'observe': int(observe),
         'max_memory': int(max_memory),
         'y_scale': float(y_scale),
         'rnd_still_moves': rnd_still_moves,

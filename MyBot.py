@@ -16,7 +16,7 @@ my_id, game_map = get_init()
 logger.info('Done.')
 
 frame = HaliteReplayFrame.from_game_map(game_map)
-best_moves(model, frame, my_id, **learn_args)
+best_moves(model, game_map, frame, my_id, **learn_args)
 
 send_init("rocksalt v1")
 
@@ -24,4 +24,4 @@ while True:
     moves = []
     game_map.get_frame()
     frame = HaliteReplayFrame.from_game_map(game_map)
-    send_frame(best_moves(model, frame, my_id, **learn_args))
+    send_frame(best_moves(model, game_map, frame, my_id, **learn_args))
