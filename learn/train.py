@@ -16,7 +16,7 @@ from learn.features import \
     process_replay
 from sklearn.model_selection import ShuffleSplit
 from utils.hlt import Move, Square, DIRECTIONS, STILL
-from utils.logging import logging, log
+from utils.halite_logging import logging, log
 from utils.overkill import get_move
 from utils.replay import from_local, from_s3, to_s3
 
@@ -52,21 +52,21 @@ def get_cnn2d_model(input_shape):
     Only compatible with 2-dimensional tile-based features
     """
     return Sequential([
-        Convolution2D(128, 3, 3,
+        Convolution2D(128, 2, 2,
                       border_mode='valid', dim_ordering='th',
                       activation='relu', input_shape=input_shape),
-        Dropout(0.25),
-        Convolution2D(64, 3, 3,
+        Dropout(0.1),
+        Convolution2D(64, 2, 2,
                       border_mode='valid', dim_ordering='th',
                       activation='relu'),
         Dropout(0.1),
-        Convolution2D(32, 3, 3,
+        Convolution2D(32, 2, 2,
                       border_mode='valid', dim_ordering='th',
                       activation='relu'),
         Dropout(0.1),
         Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.25),
+        Dense(64, activation='relu'),
+        Dropout(0.1),
         Dense(nb_classes),
     ])
 
@@ -120,7 +120,7 @@ def create_model(X, **learn_args):
         model.summary()
         model.compile(
             loss='categorical_crossentropy',
-            optimizer=Adam(1e-5),
+            optimizer=Adam(1e-3),
             metrics=['accuracy']
         )
     return model
@@ -251,22 +251,32 @@ def iter_data(input_file, **learn_args):
     random.shuffle(replay_names)
     batch_size = learn_args['batch_size']
     for index, replay_name in enumerate(replay_names):
-        try:
-            replay = from_local(replay_name) if learn_args['local_replays'] \
+        replay = from_local(replay_name) if learn_args['local_replays'] \
                 else from_s3(replay_name)
-        except:
-            continue
 
         if replay.num_frames < 10:
             log(logger.info, 'Skipping: {}, #frames={}'.format(
                 replay_name, replay.num_frames))
             continue
 
-        log(logger.info, 'Replay: {} ({} / {}) Winner: {}'.format(
-            replay_name, (index + 1), len(replay_names),
-            replay.player_names[replay.winner - 1]))
+        winner = replay.winner
+        player = winner
+        player_name = learn_args.get('player_name')
+        player_names = replay.player_names
+        if player_name and player_name not in player_names:
+            continue
+        elif player_name and player_name in player_names:
+            player = 1 + player_names.index(player_name)
+
+        log(logger.info, 'Replay: {} ({}/{}) Players: {} '
+            'Winner: {} Player: {}'.format(
+                replay_name, (index + 1), len(replay_names),
+                player_names,
+                player_names[winner - 1],
+                player_name,
+        ))
         X_train, Y_train, X_test, Y_test = \
-            get_train_test_data(replay, replay.winner, **learn_args)
+            get_train_test_data(replay, player, **learn_args)
 
         for start in range(0, X_train.shape[0], batch_size):
             begin, end = start, start + batch_size
@@ -467,6 +477,7 @@ def learn_from_qlearning(**learn_args):
                 ['linear', 'mlp', 'cnn1d', 'cnn2d']),
     feature_type=('Feature type (axes, tile)', 'option', 'f', str,
                   ['axes', 'tile']),
+    player_name=('Player name whose replays to train on', 'option', 'p'),
     local_replays=('Whether the hlt files are local or S3', 'flag', 'l'),
     learn_single=('Learn from a single or a batch of replays', 'flag', 's'),
     qlearn=('Learn via q-learning', 'flag', 'q'),
@@ -482,12 +493,13 @@ def learn_from_qlearning(**learn_args):
     max_memory=('Size of replay memory', 'option'),
     y_scale=('Scaling of move output for learning', 'option'),
     rnd_still_moves=('Bias random moves towards STILL (instead of uniform)',
-                   'flag', 'u'),
+                     'flag', 'u'),
 )
 def learn(
     input_file,
     model_prefix,
     input_model=None,
+    player_name=None,
     model_type='mlp',
     feature_type='tile',
     local_replays=False,
@@ -511,6 +523,7 @@ def learn(
         'model_type': model_type,
         'input_model': input_model,
         'feature_type': feature_type,
+        'player_name': player_name,
         'model_prefix': model_prefix,
         'local_replays': local_replays,
         'qlearn': qlearn,

@@ -2,7 +2,7 @@ import ujson as json
 
 from learn.train import load_model, best_moves
 from utils.hlt import get_init, send_init, send_frame
-from utils.logging import logging
+from utils.halite_logging import logging
 from utils.replay import HaliteReplayFrame
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ logger.info('Done.')
 frame = HaliteReplayFrame.from_game_map(game_map)
 best_moves(model, game_map, frame, my_id, **learn_args)
 
-send_init("rocksalt v1")
+send_init("rocksalt v2")
 
 while True:
     moves = []

@@ -3,7 +3,7 @@ Frame/replay processing to create examples and labels
 """
 import numpy as np
 
-from utils.logging import logging
+from utils.halite_logging import logging
 
 logger = logging.getLogger(__name__)
 

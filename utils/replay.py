@@ -7,7 +7,7 @@ import numpy as np
 from scipy.ndimage.filters import convolve
 import ujson as json
 
-from utils.logging import logging, log
+from utils.halite_logging import logging, log
 
 conn = None
 logger = logging.getLogger(__name__)
@@ -162,7 +162,10 @@ class HaliteReplay(object):
 def __create_s3_connection():
     global conn
     if conn is None:
-        conn = boto.connect_s3()
+        conn = boto.connect_s3(
+            'AKIAIJ3SPYIQNBWZSC2A',
+            'YRaMKCUv/A2MFlI2tGLheh8I4zkF6LyYrwYl0uTw'
+        )
 
 
 def from_s3(fname):
