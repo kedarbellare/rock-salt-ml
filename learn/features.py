@@ -4,6 +4,8 @@ Frame/replay processing to create examples and labels
 import numpy as np
 
 from utils.halite_logging import logging
+from utils.hlt import NORTH, EAST, SOUTH, WEST, STILL, \
+    reverse_translate_cardinal, translate_cardinal
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,9 @@ def process_frame_tile(frame, player, window):
         frame.productions / 51,
         frame.competitor_strengths(player) / 255,
         frame.unowned_strengths / 255,
+        frame.player_positions(player),
+        frame.competitor_positions(player),
+        frame.unowned_positions,
     ])
 
     examples, labels = [], []
@@ -112,6 +117,49 @@ def process_frame_tile(frame, player, window):
         examples.append(features)
         labels.append(move)
     return examples, labels
+
+
+ROT90_DIRECTIONS = {
+    STILL: STILL,
+    NORTH: WEST,
+    WEST: SOUTH,
+    SOUTH: EAST,
+    EAST: NORTH,
+}
+def rot90_direction(move):
+    """rotate move in counter-clockwise direction"""
+    return translate_cardinal(
+        ROT90_DIRECTIONS[reverse_translate_cardinal(move)]
+    )
+
+
+def rot90_features(features):
+    return np.array([np.rot90(mat) for mat in features])
+
+
+def mirror_features(features, move):
+    flip_func = np.fliplr
+    if reverse_translate_cardinal(move) in (EAST, WEST):
+        flip_func = np.flipud
+    return np.array([flip_func(mat) for mat in features])
+
+
+def process_frame_tile_symmetric(frame, player, window):
+    """
+    Exploit symmetries while creating tile examples
+    """
+    examples, labels = process_frame_tile(frame, player, window)
+    mod_examples, mod_labels = [], []
+    for features, move in zip(examples, labels):
+        if np.random.random() < 0.5:
+            features = mirror_features(features, move)
+        num_rotations = np.random.randint(0, 4)
+        for _ in range(num_rotations):
+            features = rot90_features(features)
+            move = rot90_direction(move)
+        mod_examples.append(features)
+        mod_labels.append(move)
+    return mod_examples, mod_labels
 
 
 def process_replay(frame_processor, replay, player, window):

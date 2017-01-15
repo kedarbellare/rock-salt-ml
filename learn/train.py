@@ -12,7 +12,7 @@ from learn.keras_utils import Activation, Convolution1D, Convolution2D, \
     Dense, Dropout, Flatten
 from learn.keras_utils import Adam
 from learn.features import \
-    process_frame_axes, process_frame_tile, \
+    process_frame_axes, process_frame_tile, process_frame_tile_symmetric, \
     process_replay
 from sklearn.model_selection import ShuffleSplit
 from utils.hlt import Move, Square, DIRECTIONS, STILL
@@ -24,6 +24,7 @@ nb_classes = len(DIRECTIONS)
 FEATURE_TYPE_PROCESSOR = {
     'axes': process_frame_axes,
     'tile': process_frame_tile,
+    'sym_tile': process_frame_tile_symmetric,
 }
 logger = logging.getLogger(__name__)
 np.set_printoptions(precision=3, linewidth=120)
@@ -197,7 +198,7 @@ def best_moves(model, game_map, frame, player, **learn_args):
 def get_XY(replay, player, **learn_args):
     # construct input and output
     examples, labels = process_replay(
-        FEATURE_TYPE_PROCESSOR[learn_args['feature_type']],
+        FEATURE_TYPE_PROCESSOR[learn_args['train_feature_type']],
         replay,
         player=player,
         window=learn_args['window']
@@ -477,6 +478,8 @@ def learn_from_qlearning(**learn_args):
                 ['linear', 'mlp', 'cnn1d', 'cnn2d']),
     feature_type=('Feature type (axes, tile)', 'option', 'f', str,
                   ['axes', 'tile']),
+    train_feature_type=('Training feature type (axes, tile, sym_tile)',
+                        'option', 'tf', str, ['axes', 'tile', 'sym_tile']),
     player_name=('Player name whose replays to train on', 'option', 'p'),
     local_replays=('Whether the hlt files are local or S3', 'flag', 'l'),
     learn_single=('Learn from a single or a batch of replays', 'flag', 's'),
@@ -502,12 +505,13 @@ def learn(
     player_name=None,
     model_type='mlp',
     feature_type='tile',
+    train_feature_type='tile',
     local_replays=False,
     learn_single=False,
     qlearn=False,
     window_size=5,
     test_size=0.1,
-    batch_size=32,
+    batch_size=64,
     checkpoint_samples=100000,
     gamma=0.9,
     start_eps=0.5,
@@ -523,6 +527,7 @@ def learn(
         'model_type': model_type,
         'input_model': input_model,
         'feature_type': feature_type,
+        'train_feature_type': train_feature_type,
         'player_name': player_name,
         'model_prefix': model_prefix,
         'local_replays': local_replays,

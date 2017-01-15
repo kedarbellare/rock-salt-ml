@@ -3,5 +3,5 @@ boto==2.43.0
 h5py==2.6.0
 plac==0.9.6
 scikit-learn==0.18.1
-tensorflow==0.12.0rc0
+tensorflow==0.12.1
 ujson==1.35

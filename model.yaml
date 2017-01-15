@@ -10,7 +10,7 @@ config:
       activity_regularizer: null
       b_constraint: null
       b_regularizer: null
-      batch_input_shape: !!python/tuple [null, 4, 5, 5]
+      batch_input_shape: !!python/tuple [null, 7, 5, 5]
       bias: true
       border_mode: valid
       dim_ordering: th

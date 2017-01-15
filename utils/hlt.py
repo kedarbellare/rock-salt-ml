@@ -159,6 +159,13 @@ def translate_cardinal(direction):
     return (direction + 1) % 5
 
 
+def reverse_translate_cardinal(direction):
+    """
+    Reverse the translation of the direction
+    """
+    return (direction - 1) % 5
+
+
 def send_frame(moves):
     send_string(' '.join(
         str(move.square.x) + ' ' + str(move.square.y) + ' ' +
