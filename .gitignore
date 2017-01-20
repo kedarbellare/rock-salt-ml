@@ -91,3 +91,4 @@ ENV/
 # Halite specific settings
 halite
 *.hlt
+*.sqlite3
